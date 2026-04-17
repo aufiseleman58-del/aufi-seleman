@@ -1,0 +1,6 @@
+{
+  "name": "Zathu",
+  "description": "A lightweight, mobile-first social super app for emerging markets, featuring social networking, messaging, marketplace, and AI-powered content moderation.",
+  "requestFramePermissions": ["camera", "microphone", "geolocation"],
+  "majorCapabilities": ["social", "messaging", "marketplace", "ai"]
+}
