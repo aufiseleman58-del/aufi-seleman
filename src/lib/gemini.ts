@@ -140,3 +140,70 @@ export async function generateTags(description: string) {
 
   return JSON.parse(response.text);
 }
+
+export async function generateSocialMediaContent(input: {
+  topic: string;
+  audience: string;
+  platform: string;
+  tone: string;
+  language: string;
+  goal: string;
+  brandName?: string;
+  brandVoice?: string;
+  contentFormat?: string;
+  facts?: string;
+}) {
+  const response = await ai.models.generateContent({
+    model: geminiModel,
+    contents: `Create social media content that feels authentic, accurate, and human-written.
+
+Brief:
+- Brand or creator name: ${input.brandName || 'Not provided'}
+- Brand voice notes: ${input.brandVoice || 'Not provided'}
+- Topic: ${input.topic}
+- Audience: ${input.audience}
+- Platform: ${input.platform}
+- Content format: ${input.contentFormat || 'Standard post'}
+- Goal: ${input.goal}
+- Tone: ${input.tone}
+- Language: ${input.language}
+- Verified facts to use exactly, without inventing unsupported details: ${input.facts || 'No extra facts provided'}
+
+Rules:
+- Do not invent prices, dates, locations, testimonials, guarantees, phone numbers, links, or statistics.
+- If important facts are missing, make the post useful without pretending to know them.
+- Use a natural human rhythm, varied sentence lengths, and specific local context only when supplied.
+- Avoid generic AI phrases like "unlock your potential", "game changer", "revolutionary", or "elevate your experience" unless the user explicitly requests them.
+- Include a clear call to action.
+- Add a short accuracy note that explains what was based on supplied facts vs. creative wording.
+- Return JSON with post, hashtags, hooks, callToAction, qualityScore, accuracyNote, and contentCalendar.`,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          post: { type: Type.STRING },
+          hashtags: { type: Type.ARRAY, items: { type: Type.STRING } },
+          hooks: { type: Type.ARRAY, items: { type: Type.STRING } },
+          callToAction: { type: Type.STRING },
+          qualityScore: { type: Type.NUMBER },
+          accuracyNote: { type: Type.STRING },
+          contentCalendar: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                day: { type: Type.STRING },
+                idea: { type: Type.STRING },
+              },
+              required: ["day", "idea"],
+            },
+          },
+        },
+        required: ["post", "hashtags", "hooks", "callToAction", "qualityScore", "accuracyNote", "contentCalendar"],
+      },
+    },
+  });
+
+  return JSON.parse(response.text);
+}

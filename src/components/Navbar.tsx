@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { Home, MessageCircle, Play, ShoppingBag, ShieldCheck } from 'lucide-react';
+import { Home, MessageCircle, Play, ShoppingBag, ShieldCheck, Sparkles } from 'lucide-react';
 import { useAuth } from '../AuthContext';
 import { useSettings } from '../SettingsContext';
 import UserComponent from './User';
@@ -11,7 +11,7 @@ export default function Navbar() {
   const isAdmin = profile?.role === 'admin';
 
   return (
-    <nav className={`absolute bottom-0 left-0 right-0 h-16 bg-surface border-t border-border grid ${isAdmin ? 'grid-cols-6' : 'grid-cols-5'} pb-3 shrink-0`}>
+    <nav className={`absolute bottom-0 left-0 right-0 h-16 bg-surface border-t border-border grid ${isAdmin ? 'grid-cols-7' : 'grid-cols-6'} pb-3 shrink-0`}>
       <NavLink to="/" className={({ isActive }) => `flex flex-col items-center justify-center gap-1 ${isActive ? 'text-primary' : 'text-text-muted'}`}>
         <Home size={20} />
         <span className="text-[9px] font-medium">{t('nav.home')}</span>
@@ -30,6 +30,11 @@ export default function Navbar() {
       <NavLink to="/marketplace" className={({ isActive }) => `flex flex-col items-center justify-center gap-1 ${isActive ? 'text-primary' : 'text-text-muted'}`}>
         <ShoppingBag size={20} />
         <span className="text-[9px] font-medium">{t('nav.market')}</span>
+      </NavLink>
+
+      <NavLink to="/creator" className={({ isActive }) => `flex flex-col items-center justify-center gap-1 ${isActive ? 'text-primary' : 'text-text-muted'}`}>
+        <Sparkles size={20} />
+        <span className="text-[9px] font-medium">Creator</span>
       </NavLink>
 
       {isAdmin && (

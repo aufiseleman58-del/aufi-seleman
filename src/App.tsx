@@ -10,6 +10,7 @@ import Messages from './pages/Messages';
 import Search from './pages/Search';
 import Wallet from './pages/Wallet';
 import Notifications from './pages/Notifications';
+import ContentGenerator from './pages/ContentGenerator';
 import { Toaster } from 'sonner';
 import { AuthProvider } from './AuthContext';
 import { SettingsProvider } from './SettingsContext';
@@ -31,6 +32,7 @@ export default function App() {
               <Route path="/search" element={<Search />} />
               <Route path="/wallet" element={<Wallet />} />
               <Route path="/notifications" element={<Notifications />} />
+              <Route path="/creator" element={<ContentGenerator />} />
             </Routes>
           </Layout>
           <Toaster position="top-center" />
