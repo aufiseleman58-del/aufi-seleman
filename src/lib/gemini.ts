@@ -140,3 +140,48 @@ export async function generateTags(description: string) {
 
   return JSON.parse(response.text);
 }
+
+export async function generateSocialMediaContent(input: {
+  topic: string;
+  audience: string;
+  platform: string;
+  tone: string;
+  language: string;
+  goal: string;
+  facts?: string;
+}) {
+  const response = await ai.models.generateContent({
+    model: geminiModel,
+    contents: `Create social media content that feels authentic, accurate, and human-written.
+
+Brief:
+- Topic: ${input.topic}
+- Audience: ${input.audience}
+- Platform: ${input.platform}
+- Goal: ${input.goal}
+- Tone: ${input.tone}
+- Language: ${input.language}
+- Verified facts to use exactly, without inventing unsupported details: ${input.facts || 'No extra facts provided'}
+
+Rules:
+- Do not invent prices, dates, locations, testimonials, guarantees, or statistics.
+- Use a natural human rhythm, varied sentence lengths, and specific local context only when supplied.
+- Avoid generic AI phrases like "unlock your potential" or "game changer" unless they genuinely fit.
+- Include a clear call to action.
+- Return JSON with post, hashtags, and hooks.`,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          post: { type: Type.STRING },
+          hashtags: { type: Type.ARRAY, items: { type: Type.STRING } },
+          hooks: { type: Type.ARRAY, items: { type: Type.STRING } },
+        },
+        required: ["post", "hashtags", "hooks"],
+      },
+    },
+  });
+
+  return JSON.parse(response.text);
+}
