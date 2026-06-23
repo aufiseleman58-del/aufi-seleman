@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { Bot, CalendarDays, CheckCircle2, Clipboard, Copy, Loader2, Megaphone, PenLine, Send, Sparkles, Target, UserRoundCheck } from 'lucide-react';
+import { BarChart3, Bot, CalendarDays, CheckCircle2, Clipboard, Copy, History, Loader2, Megaphone, PenLine, Save, Send, Sparkles, Target, Trash2, UserRoundCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,11 +12,15 @@ import { cn } from '@/lib/utils';
 
 type Platform = 'Facebook' | 'Instagram' | 'TikTok' | 'LinkedIn' | 'X';
 type Tone = 'Warm local voice' | 'Professional' | 'Funny' | 'Inspirational' | 'Educational';
+type Draft = { id: string; topic: string; post: string; hashtags: string[]; createdAt: string };
+type CalendarItem = { day: string; idea: string };
 
 const platforms: Platform[] = ['Facebook', 'Instagram', 'TikTok', 'LinkedIn', 'X'];
 const tones: Tone[] = ['Warm local voice', 'Professional', 'Funny', 'Inspirational', 'Educational'];
 const languages = ['English', 'Chichewa', 'English + Chichewa'];
 const goals = ['Engagement', 'Sales', 'Awareness', 'Education', 'Community update'];
+const formats = ['Standard post', 'Short caption', 'Story script', 'Video script', 'Carousel outline'];
+const storageKey = 'zathu-content-generator-drafts';
 
 const starterIdeas = [
   'Launch a new maize flour brand in Lilongwe',
@@ -32,17 +36,37 @@ export default function ContentGenerator() {
   const [tone, setTone] = useState<Tone>('Warm local voice');
   const [language, setLanguage] = useState('English + Chichewa');
   const [goal, setGoal] = useState('Engagement');
+  const [brandName, setBrandName] = useState(profile?.displayName || '');
+  const [brandVoice, setBrandVoice] = useState('Friendly, clear, and locally grounded');
+  const [contentFormat, setContentFormat] = useState('Standard post');
   const [facts, setFacts] = useState('');
   const [generated, setGenerated] = useState('');
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [hooks, setHooks] = useState<string[]>([]);
+  const [callToAction, setCallToAction] = useState('');
+  const [accuracyNote, setAccuracyNote] = useState('');
+  const [qualityScore, setQualityScore] = useState(0);
+  const [contentCalendar, setContentCalendar] = useState<CalendarItem[]>([]);
+  const [drafts, setDrafts] = useState<Draft[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(storageKey) || '[]');
+    } catch {
+      return [];
+    }
+  });
   const [loading, setLoading] = useState(false);
   const [publishing, setPublishing] = useState(false);
 
+  useEffect(() => {
+    if (!brandName && profile?.displayName) {
+      setBrandName(profile.displayName);
+    }
+  }, [brandName, profile?.displayName]);
+
   const completion = useMemo(() => {
-    const filled = [topic, audience, platform, tone, language, goal].filter(Boolean).length;
-    return Math.round((filled / 6) * 100);
-  }, [topic, audience, platform, tone, language, goal]);
+    const filled = [topic, audience, platform, tone, language, goal, brandName, contentFormat].filter(Boolean).length;
+    return Math.round((filled / 8) * 100);
+  }, [topic, audience, platform, tone, language, goal, brandName, contentFormat]);
 
   const generateContent = async () => {
     if (!topic.trim()) {
@@ -52,10 +76,14 @@ export default function ContentGenerator() {
 
     setLoading(true);
     try {
-      const result = await generateSocialMediaContent({ topic, audience, platform, tone, language, goal, facts });
+      const result = await generateSocialMediaContent({ topic, audience, platform, tone, language, goal, brandName, brandVoice, contentFormat, facts });
       setGenerated(result.post);
       setHashtags(result.hashtags || []);
       setHooks(result.hooks || []);
+      setCallToAction(result.callToAction || '');
+      setAccuracyNote(result.accuracyNote || '');
+      setQualityScore(Math.max(0, Math.min(100, Math.round(result.qualityScore || 0))));
+      setContentCalendar(result.contentCalendar || []);
       toast.success('Human-feel content generated');
     } catch (error) {
       console.error(error);
@@ -104,6 +132,33 @@ export default function ContentGenerator() {
     toast.success('Copied to clipboard');
   };
 
+  const persistDrafts = (nextDrafts: Draft[]) => {
+    setDrafts(nextDrafts);
+    localStorage.setItem(storageKey, JSON.stringify(nextDrafts));
+  };
+
+  const saveDraft = () => {
+    if (!generated) {
+      toast.error('Generate content before saving a draft');
+      return;
+    }
+    const nextDrafts = [{ id: crypto.randomUUID(), topic, post: generated, hashtags, createdAt: new Date().toISOString() }, ...drafts].slice(0, 12);
+    persistDrafts(nextDrafts);
+    toast.success('Draft saved on this device');
+  };
+
+  const loadDraft = (draft: Draft) => {
+    setTopic(draft.topic);
+    setGenerated(draft.post);
+    setHashtags(draft.hashtags || []);
+    toast.success('Draft loaded');
+  };
+
+  const deleteDraft = (draftId: string) => {
+    persistDrafts(drafts.filter((draft) => draft.id !== draftId));
+    toast.success('Draft removed');
+  };
+
   return (
     <div className="min-h-full bg-slate-50 pb-24">
       <section className="bg-gradient-to-br from-emerald-700 via-emerald-600 to-slate-900 text-white p-5 space-y-5">
@@ -120,7 +175,7 @@ export default function ContentGenerator() {
           Create accurate, authentic, human-sounding posts with local context, profile-aware publishing, hooks, hashtags, and a dashboard-ready workflow.
         </p>
         <div className="grid grid-cols-3 gap-2">
-          {[['Drafts', '12'], ['Accuracy', 'Fact-led'], ['Voice', 'Human']].map(([label, value]) => (
+          {[['Drafts', String(drafts.length)], ['Accuracy', 'Fact-led'], ['Voice', 'Human']].map(([label, value]) => (
             <div key={label} className="rounded-2xl bg-white/10 p-3 border border-white/10">
               <p className="text-[9px] uppercase font-black text-emerald-100">{label}</p>
               <p className="text-sm font-black">{value}</p>
@@ -153,7 +208,9 @@ export default function ContentGenerator() {
             <Field label="Audience"><Input value={audience} onChange={(e) => setAudience(e.target.value)} className="rounded-xl text-xs" /></Field>
             <SelectField label="Goal" value={goal} setValue={setGoal} options={goals} />
             <SelectField label="Platform" value={platform} setValue={(v) => setPlatform(v as Platform)} options={platforms} />
+            <SelectField label="Format" value={contentFormat} setValue={setContentFormat} options={formats} />
             <SelectField label="Language" value={language} setValue={setLanguage} options={languages} />
+            <Field label="Brand / profile"><Input value={brandName} onChange={(e) => setBrandName(e.target.value)} className="rounded-xl text-xs" placeholder="Business or creator name" /></Field>
           </div>
 
           <div className="space-y-2">
@@ -166,6 +223,10 @@ export default function ContentGenerator() {
               ))}
             </div>
           </div>
+
+          <Field label="Brand voice notes">
+            <Textarea value={brandVoice} onChange={(e) => setBrandVoice(e.target.value)} placeholder="Example: Honest, neighbourly, not too polished, with simple Chichewa where natural" className="rounded-2xl min-h-16" />
+          </Field>
 
           <Field label="Facts, prices, dates, links, offers">
             <Textarea value={facts} onChange={(e) => setFacts(e.target.value)} placeholder="Add verifiable details the AI must not invent: location, opening hours, price, contact, event date..." className="rounded-2xl min-h-20" />
@@ -187,10 +248,17 @@ export default function ContentGenerator() {
             <div className="space-y-4">
               <div className="rounded-2xl bg-slate-50 border border-border p-4 whitespace-pre-wrap text-sm leading-relaxed">{generated}</div>
               {hashtags.length > 0 && <div className="flex flex-wrap gap-2">{hashtags.map(tag => <span key={tag} className="text-[10px] font-black bg-emerald-50 text-primary px-2 py-1 rounded-full">#{tag.replace(/^#/, '')}</span>)}</div>}
-              {hooks.length > 0 && <div className="space-y-2"><p className="text-[10px] font-black uppercase text-text-muted">Alternative hooks</p>{hooks.map(hook => <div key={hook} className="text-xs p-3 rounded-xl border border-dashed border-border bg-white flex gap-2"><Clipboard size={14} className="text-primary shrink-0" />{hook}</div>)}</div>}
               <div className="grid grid-cols-2 gap-2">
+                <Metric icon={<BarChart3 size={14} />} label="Quality" value={`${qualityScore || 0}%`} />
+                <Metric icon={<Target size={14} />} label="CTA" value={callToAction || 'Included'} />
+              </div>
+              {accuracyNote && <div className="text-xs p-3 rounded-xl bg-amber-50 border border-amber-100 text-amber-800"><strong>Accuracy note:</strong> {accuracyNote}</div>}
+              {hooks.length > 0 && <div className="space-y-2"><p className="text-[10px] font-black uppercase text-text-muted">Alternative hooks</p>{hooks.map(hook => <div key={hook} className="text-xs p-3 rounded-xl border border-dashed border-border bg-white flex gap-2"><Clipboard size={14} className="text-primary shrink-0" />{hook}</div>)}</div>}
+              {contentCalendar.length > 0 && <div className="space-y-2"><p className="text-[10px] font-black uppercase text-text-muted">Mini content calendar</p>{contentCalendar.map(item => <div key={`${item.day}-${item.idea}`} className="text-xs p-3 rounded-xl bg-slate-50 border border-border flex gap-2"><CalendarDays size={14} className="text-primary shrink-0" /><span><strong>{item.day}:</strong> {item.idea}</span></div>)}</div>}
+              <div className="grid grid-cols-2 gap-2">
+                <Button variant="outline" onClick={saveDraft} className="rounded-xl gap-2"><Save size={15} /> Save</Button>
                 <Button variant="outline" onClick={copyContent} className="rounded-xl gap-2"><Copy size={15} /> Copy</Button>
-                <Button onClick={publishPost} disabled={publishing} className="rounded-xl bg-primary text-white gap-2">{publishing ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />} Publish</Button>
+                <Button onClick={publishPost} disabled={publishing} className="rounded-xl bg-primary text-white gap-2 col-span-2">{publishing ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />} Publish</Button>
               </div>
             </div>
           ) : (
@@ -198,6 +266,25 @@ export default function ContentGenerator() {
               <Sparkles className="mx-auto text-slate-300" size={36} />
               <p className="text-sm font-bold">Your generated post will appear here.</p>
               <p className="text-[11px]">Built to avoid generic AI wording and preserve factual accuracy.</p>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white rounded-3xl border border-border p-4 shadow-sm space-y-3">
+          <h2 className="font-black text-sm flex items-center gap-2"><History size={16} className="text-primary" /> Saved drafts</h2>
+          {drafts.length === 0 ? (
+            <p className="text-xs text-text-muted bg-slate-50 border border-dashed border-border rounded-2xl p-4 text-center">No saved drafts yet. Generated content can be saved locally for later editing.</p>
+          ) : (
+            <div className="space-y-2">
+              {drafts.map((draft) => (
+                <div key={draft.id} className="rounded-2xl border border-border p-3 bg-slate-50 flex gap-3 items-start">
+                  <button onClick={() => loadDraft(draft)} className="flex-1 text-left">
+                    <p className="text-xs font-black line-clamp-1">{draft.topic || 'Untitled draft'}</p>
+                    <p className="text-[10px] text-text-muted line-clamp-2 mt-1">{draft.post}</p>
+                  </button>
+                  <button onClick={() => deleteDraft(draft.id)} className="text-text-muted hover:text-red-500" title="Delete draft"><Trash2 size={15} /></button>
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -225,6 +312,10 @@ function SelectField({ label, value, setValue, options }: { label: string; value
       </select>
     </Field>
   );
+}
+
+function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return <div className="rounded-2xl bg-slate-50 border border-border p-3"><div className="flex items-center gap-1 text-primary mb-1">{icon}<span className="text-[9px] font-black uppercase">{label}</span></div><p className="text-xs font-black line-clamp-1">{value}</p></div>;
 }
 
 function Feature({ icon, title, text }: { icon: React.ReactNode; title: string; text: string }) {
