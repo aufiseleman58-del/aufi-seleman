@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import Home from './pages/Home';
+import MysteryHealth from './pages/MysteryHealth';
 import Videos from './pages/Videos';
 import Marketplace from './pages/Marketplace';
 import Profile from './pages/Profile';
@@ -21,7 +22,8 @@ export default function App() {
         <Router>
           <Layout>
             <Routes>
-              <Route path="/" element={<Home />} />
+              <Route path="/" element={<MysteryHealth />} />
+              <Route path="/community" element={<Home />} />
               <Route path="/videos" element={<Videos />} />
               <Route path="/marketplace" element={<Marketplace />} />
               <Route path="/messages" element={<Messages />} />
