@@ -7,12 +7,15 @@ interface SettingsContextType {
   setLanguage: (lang: Language) => void;
   dataSaver: boolean;
   setDataSaver: (enabled: boolean) => void;
+  darkMode: boolean;
+  setDarkMode: (enabled: boolean) => void;
   t: (key: string) => string;
 }
 
 const translations: Record<Language, Record<string, string>> = {
   English: {
     'nav.home': 'Home',
+    'nav.reels': 'Reels',
     'nav.videos': 'Videos',
     'nav.market': 'Market',
     'nav.messages': 'Messages',
@@ -26,7 +29,7 @@ const translations: Record<Language, Record<string, string>> = {
     'market.sell': 'Sell Item',
     'settings.languages': 'Language',
     'settings.dataSaver': 'Data Saver',
-    'settings.dataSaverDesc': 'Reduce video quality to save mobile data',
+    'settings.dataSaverDesc': 'Disable video auto-play and compress images to save data',
     'profile.edit': 'Edit Profile',
     'profile.admin': 'Admin Control',
     'profile.logout': 'Sign Out',
@@ -43,6 +46,7 @@ const translations: Record<Language, Record<string, string>> = {
     'payment.success': 'Payment Successful!',
     'payment.wait': 'Check your phone for USSD prompt',
     'video.comments': 'Comments',
+    'post.comments': 'Post Comments',
     'video.share': 'Share',
     'video.post': 'Post',
     'profile.activity': 'Activity',
@@ -71,6 +75,7 @@ const translations: Record<Language, Record<string, string>> = {
     'profile.verifying': 'Verifying Identity...',
     'profile.shareFirstPost': 'Share your first update',
     'profile.shareFirstVideo': 'Share your first video',
+    'profile.saved': 'Saved',
     'common.loading': 'Loading content...',
     'wallet.send': 'Send',
     'wallet.topup': 'Top Up',
@@ -84,9 +89,23 @@ const translations: Record<Language, Record<string, string>> = {
     'wallet.balanceAvailable': 'Available Balance',
     'wallet.income': 'Income',
     'wallet.expense': 'Expense',
+    'wallet.chitipa': 'Community Savings (Chitipa)',
+    'wallet.createPool': 'Create Pool',
+    'wallet.contribution': 'Contribution',
+    'wallet.members': 'Members',
+    'wallet.target': 'Target',
+    'wallet.escrowHeld': 'Escrow Funds',
+    'market.escrowSafe': 'Pay safely with Zathu Escrow',
+    'market.escrowDesc': 'Funds are held securely and released only when you confirm receipt.',
+    'market.confirmReceipt': 'Confirm Receipt',
+    'market.leaveReview': 'Leave a Review',
+    'market.verifiedSeller': 'Verified Seller',
+    'assistant.name': 'Zathu Assistant',
+    'assistant.sparkle': 'AI Powered Intelligence',
   },
   Chichewa: {
     'nav.home': 'Kunyumba',
+    'nav.reels': "Mavidiyo Ang'ono",
     'nav.videos': 'Mavidiyo',
     'nav.market': 'Msika',
     'nav.messages': 'Mauthenga',
@@ -100,7 +119,7 @@ const translations: Record<Language, Record<string, string>> = {
     'market.sell': 'Gulitsani Thupi',
     'settings.languages': 'Chilankhulo',
     'settings.dataSaver': 'Kusunga Data',
-    'settings.dataSaverDesc': 'Chepetsani mavidiyo kuti musunge data',
+    'settings.dataSaverDesc': 'Lekani kusewera mavidiyo okha komanso kuchepetsa zithunzi kuti musunge data',
     'profile.edit': 'Sinthani Mbiri',
     'profile.admin': "Zoyang'anira",
     'profile.logout': 'Tulukani',
@@ -117,6 +136,7 @@ const translations: Record<Language, Record<string, string>> = {
     'payment.success': 'Malipiro Apambana!',
     'payment.wait': 'Onani pafoni yanu kuti mutsimikize',
     'video.comments': 'Ndemanga',
+    'post.comments': 'Ndemanga pa Zolemba',
     'video.share': 'Gawani',
     'video.post': 'Tumizani',
     'profile.activity': 'Zochitika',
@@ -145,6 +165,7 @@ const translations: Record<Language, Record<string, string>> = {
     'profile.verifying': 'Tikutsimikizira Mbiri...',
     'profile.shareFirstPost': 'Tumizani zochitika zanu zoyamba',
     'profile.shareFirstVideo': 'Tumizani vidiyo yanu yoyamba',
+    'profile.saved': 'Zosungidwa',
     'common.loading': 'Tikubweretsa zinthu...',
     'wallet.send': 'Tumizani',
     'wallet.topup': 'Onjezerani',
@@ -158,6 +179,19 @@ const translations: Record<Language, Record<string, string>> = {
     'wallet.balanceAvailable': 'Ndalama Zomwe Zilipo',
     'wallet.income': 'Zolowa',
     'wallet.expense': 'Zotuluka',
+    'wallet.chitipa': 'Zasungidwa Pagulu (Chitipa)',
+    'wallet.createPool': 'Yambitsani Gulu',
+    'wallet.contribution': 'Chonsecho',
+    'wallet.members': 'Mamembala',
+    'wallet.target': 'Cholinga',
+    'wallet.escrowHeld': 'Ndalama Zozisungira',
+    'market.escrowSafe': 'Lipirani mwachitetezo ndi Zathu Escrow',
+    'market.escrowDesc': 'Ndalama zimasungidwa mwachinsinsi ndipo zimaperekedwa mukatsimikiza kuti mwalandira katundu.',
+    'market.confirmReceipt': 'Tsimikizani Kulandira',
+    'market.leaveReview': 'Lembani Maganizo Anu',
+    'market.verifiedSeller': 'Wogulitsa Otsimikizika',
+    'assistant.name': 'Zathu AI',
+    'assistant.sparkle': 'Nzeru za AI',
   }
 };
 
@@ -172,6 +206,10 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     const saved = localStorage.getItem('app-datasaver');
     return saved === 'true';
   });
+  const [darkMode, setDarkMode] = useState(() => {
+    const saved = localStorage.getItem('app-darkmode');
+    return saved === 'true';
+  });
 
   useEffect(() => {
     localStorage.setItem('app-language', language);
@@ -181,12 +219,21 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('app-datasaver', String(dataSaver));
   }, [dataSaver]);
 
+  useEffect(() => {
+    localStorage.setItem('app-darkmode', String(darkMode));
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [darkMode]);
+
   const t = (key: string) => {
     return translations[language][key] || key;
   };
 
   return (
-    <SettingsContext.Provider value={{ language, setLanguage, dataSaver, setDataSaver, t }}>
+    <SettingsContext.Provider value={{ language, setLanguage, dataSaver, setDataSaver, darkMode, setDarkMode, t }}>
       {children}
     </SettingsContext.Provider>
   );

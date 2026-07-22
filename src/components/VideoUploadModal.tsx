@@ -3,12 +3,13 @@ import { X, Upload, Camera, Loader2 } from 'lucide-react';
 import { useAuth } from '../AuthContext';
 import { db, storage } from '../lib/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { generateCaption } from '../lib/gemini';
 import { Sparkles } from 'lucide-react';
+import { motion } from 'motion/react';
 
 interface VideoUploadModalProps {
   isOpen: boolean;
@@ -16,10 +17,11 @@ interface VideoUploadModalProps {
 }
 
 export default function VideoUploadModal({ isOpen, onClose }: VideoUploadModalProps) {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [uploading, setUploading] = useState(false);
   const [caption, setCaption] = useState('');
   const [isGeneratingCaption, setIsGeneratingCaption] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [videoPreview, setVideoPreview] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -124,10 +126,24 @@ export default function VideoUploadModal({ isOpen, onClose }: VideoUploadModalPr
     let attempts = 0;
     const maxAttempts = 3;
 
-    const performUpload = async () => {
-      const storageRef = ref(storage, `videos/${user.uid}/${Date.now()}_${selectedFile.name}`);
-      const uploadResult = await uploadBytes(storageRef, selectedFile);
-      return await getDownloadURL(uploadResult.ref);
+    const performUpload = (): Promise<string> => {
+      return new Promise((resolve, reject) => {
+        const storageRef = ref(storage, `videos/${user.uid}/${Date.now()}_${selectedFile.name}`);
+        const uploadTask = uploadBytesResumable(storageRef, selectedFile);
+
+        uploadTask.on(
+          'state_changed',
+          (snapshot) => {
+            const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+            setUploadProgress(progress);
+          },
+          (error) => reject(error),
+          async () => {
+            const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+            resolve(downloadURL);
+          }
+        );
+      });
     };
 
     while (attempts < maxAttempts) {
@@ -136,6 +152,11 @@ export default function VideoUploadModal({ isOpen, onClose }: VideoUploadModalPr
 
         await addDoc(collection(db, 'videos'), {
           userId: user.uid,
+          userProfile: {
+            displayName: profile?.displayName || user.displayName || 'User',
+            photoURL: profile?.photoURL || user.photoURL || '',
+            isVerified: profile?.isVerified || false
+          },
           caption,
           videoUrl,
           likesCount: 0,
@@ -310,16 +331,25 @@ export default function VideoUploadModal({ isOpen, onClose }: VideoUploadModalPr
           <Button 
             type="submit" 
             disabled={!selectedFile || uploading}
-            className="w-full bg-primary hover:bg-emerald-700 text-white rounded-xl h-12 font-bold shadow-lg"
+            className="w-full bg-primary hover:bg-emerald-700 text-white rounded-xl h-12 font-bold shadow-lg overflow-hidden relative"
           >
-            {uploading ? (
-              <div className="flex items-center gap-2">
-                <Loader2 size={18} className="animate-spin" />
-                <span>Uploading...</span>
-              </div>
-            ) : (
-              "Post Video"
+            {uploading && uploadProgress > 0 && uploadProgress < 100 && (
+              <motion.div 
+                initial={{ width: 0 }}
+                animate={{ width: `${uploadProgress}%` }}
+                className="absolute left-0 top-0 bottom-0 bg-emerald-600 z-0"
+              />
             )}
+            <div className="relative z-10 flex items-center justify-center">
+              {uploading ? (
+                <div className="flex items-center gap-2">
+                  <Loader2 size={18} className="animate-spin" />
+                  <span>{Math.round(uploadProgress)}% Uploading...</span>
+                </div>
+              ) : (
+                "Post Video"
+              )}
+            </div>
           </Button>
         </form>
       </div>

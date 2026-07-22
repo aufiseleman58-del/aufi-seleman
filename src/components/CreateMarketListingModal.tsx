@@ -9,17 +9,25 @@ import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { moderateContent, generateMarketDescription, suggestMarketPrice } from '../lib/gemini';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
+import { useSettings } from '../SettingsContext';
+import { compressImage } from '../lib/imageCompression';
 
 interface CreateMarketListingModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
+  initialData?: {
+    name?: string;
+    description?: string;
+    mediaUrl?: string;
+  } | null;
 }
 
 const CATEGORIES = ['Vehicles', 'Electronics', 'Property', 'Agriculture', 'Fashion', 'Home & Garden', 'Services', 'Other'];
 
-export default function CreateMarketListingModal({ isOpen, onClose, onSuccess }: CreateMarketListingModalProps) {
-  const { user } = useAuth();
+export default function CreateMarketListingModal({ isOpen, onClose, onSuccess, initialData }: CreateMarketListingModalProps) {
+  const { user, profile } = useAuth();
+  const { dataSaver } = useSettings();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
@@ -30,19 +38,43 @@ export default function CreateMarketListingModal({ isOpen, onClose, onSuccess }:
   const [isSuggestingPrice, setIsSuggestingPrice] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [selectedImages, setSelectedImages] = useState<{ url: string; file: File }[]>([]);
+  const [preloadedImageUrl, setPreloadedImageUrl] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!isOpen) {
+    if (isOpen) {
+      if (initialData) {
+        setName(initialData.name || '');
+        setDescription(initialData.description || '');
+        setPrice('');
+        setLocation('Malawi');
+        setCategory('Other');
+        if (initialData.mediaUrl) {
+          setPreloadedImageUrl(initialData.mediaUrl);
+        } else {
+          setPreloadedImageUrl('');
+        }
+      } else {
+        setName('');
+        setDescription('');
+        setPrice('');
+        setLocation('Malawi');
+        setCategory('Other');
+        setSelectedImages([]);
+        setPreloadedImageUrl('');
+        setUploadProgress(0);
+      }
+    } else {
       setName('');
       setDescription('');
       setPrice('');
       setLocation('Malawi');
       setCategory('Other');
       setSelectedImages([]);
+      setPreloadedImageUrl('');
       setUploadProgress(0);
     }
-  }, [isOpen]);
+  }, [isOpen, initialData]);
 
   if (!isOpen) return null;
 
@@ -126,11 +158,15 @@ export default function CreateMarketListingModal({ isOpen, onClose, onSuccess }:
       }
 
       const imageUrls: string[] = [];
+      if (preloadedImageUrl) {
+        imageUrls.push(preloadedImageUrl);
+      }
       if (selectedImages.length > 0) {
         for (let i = 0; i < selectedImages.length; i++) {
           const { file } = selectedImages[i];
-          const storageRef = ref(storage, `marketplace/${user.uid}/${Date.now()}_${i}_${file.name}`);
-          const uploadTask = uploadBytesResumable(storageRef, file);
+          const fileToUpload = await compressImage(file, dataSaver);
+          const storageRef = ref(storage, `marketplace/${user.uid}/${Date.now()}_${i}_${fileToUpload.name}`);
+          const uploadTask = uploadBytesResumable(storageRef, fileToUpload);
 
           const url = await new Promise<string>((resolve, reject) => {
             uploadTask.on('state_changed', 
@@ -152,8 +188,8 @@ export default function CreateMarketListingModal({ isOpen, onClose, onSuccess }:
 
       await addDoc(collection(db, 'marketItems'), {
         sellerId: user.uid,
-        sellerName: user.displayName,
-        sellerPhoto: user.photoURL,
+        sellerName: profile?.displayName || user.displayName,
+        sellerPhoto: profile?.photoURL || user.photoURL,
         name: name.trim(),
         description: description.trim(),
         price: Number(price),
@@ -162,7 +198,7 @@ export default function CreateMarketListingModal({ isOpen, onClose, onSuccess }:
         category,
         images: imageUrls,
         status: 'active',
-        isVerified: false,
+        sellerVerified: profile?.isVerified || false,
         createdAt: serverTimestamp()
       });
 
@@ -218,8 +254,19 @@ export default function CreateMarketListingModal({ isOpen, onClose, onSuccess }:
 
           <div className="space-y-4">
             <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+              {preloadedImageUrl && (
+                <div className="relative w-24 h-24 rounded-2xl overflow-hidden border border-border shrink-0">
+                  <img src={preloadedImageUrl} alt="" className="w-full h-full object-cover" />
+                  <button 
+                    onClick={() => setPreloadedImageUrl('')}
+                    className="absolute top-1 right-1 bg-black/40 text-white p-1 rounded-full hover:bg-black/60"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
               {selectedImages.map((img, index) => (
-                <div key={index} className="relative w-24 h-24 rounded-2xl overflow-hidden border border-border shrink-0">
+                <div key={`upload-img-${index}`} className="relative w-24 h-24 rounded-2xl overflow-hidden border border-border shrink-0">
                   <img src={img.url} alt="" className="w-full h-full object-cover" />
                   <button 
                     onClick={() => removeImage(index)}
@@ -229,7 +276,7 @@ export default function CreateMarketListingModal({ isOpen, onClose, onSuccess }:
                   </button>
                 </div>
               ))}
-              {selectedImages.length < 5 && (
+              {(selectedImages.length + (preloadedImageUrl ? 1 : 0)) < 5 && (
                 <button 
                   onClick={() => fileInputRef.current?.click()}
                   className="w-24 h-24 rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-text-muted hover:border-primary hover:text-primary transition-all shrink-0"

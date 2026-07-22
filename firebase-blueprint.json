@@ -14,7 +14,9 @@
         "isVerified": { "type": "boolean" },
         "isOnline": { "type": "boolean" },
         "lastSeen": { "type": "string", "format": "date-time" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "createdAt": { "type": "string", "format": "date-time" },
+        "publicKey": { "type": "string" },
+        "encryptionEnabled": { "type": "boolean" }
       },
       "required": ["uid", "displayName"]
     },
@@ -25,22 +27,33 @@
       "properties": {
         "postId": { "type": "string" },
         "authorId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorPhoto": { "type": "string" },
         "content": { "type": "string" },
         "media": { "type": "array" },
         "likesCount": { "type": "number" },
         "commentsCount": { "type": "number" },
+        "sharesCount": { "type": "number" },
         "isModerated": { "type": "boolean" },
+        "isRepost": { "type": "boolean" },
+        "originalPostId": { "type": "string" },
+        "originalAuthorId": { "type": "string" },
+        "originalAuthorName": { "type": "string" },
+        "originalContent": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["authorId", "content", "createdAt"]
     },
     "Message": {
       "title": "Message",
-      "description": "Chat message",
+      "description": "Chat message (E2EE supported)",
       "type": "object",
       "properties": {
         "senderId": { "type": "string" },
         "text": { "type": "string" },
+        "ciphertext": { "type": "string" },
+        "nonce": { "type": "string" },
+        "isEncrypted": { "type": "boolean" },
         "mediaUrl": { "type": "string" },
         "mediaType": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }
@@ -133,12 +146,150 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["type", "fromId", "message", "read", "createdAt"]
+    },
+    "Wallet": {
+      "title": "Wallet",
+      "description": "User wallet balance and settings",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "balance": { "type": "number" },
+        "currency": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "balance", "currency"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Wallet transaction record",
+      "type": "object",
+      "properties": {
+        "fromId": { "type": "string" },
+        "toId": { "type": "string" },
+        "fromName": { "type": "string" },
+        "toName": { "type": "string" },
+        "amount": { "type": "number" },
+        "type": { "type": "string", "enum": ["send", "receive", "topup", "cashout", "billpay", "escrow_hold", "escrow_release", "pool_contribution"] },
+        "status": { "type": "string", "enum": ["pending", "completed", "failed"] },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["amount", "type", "status", "createdAt"]
+    },
+    "AIChat": {
+      "title": "AIChat",
+      "description": "Interaction with Zathu Smart Assistant (E2EE supported)",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "model"] },
+        "text": { "type": "string" },
+        "ciphertext": { "type": "string" },
+        "isEncrypted": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "role", "text", "createdAt"]
+    },
+    "MarketEscrow": {
+      "title": "MarketEscrow",
+      "description": "Escrow hold for marketplace transaction",
+      "type": "object",
+      "properties": {
+        "itemId": { "type": "string" },
+        "buyerId": { "type": "string" },
+        "sellerId": { "type": "string" },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["held", "released", "refunded"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["itemId", "buyerId", "sellerId", "amount", "status"]
+    },
+    "MarketReview": {
+      "title": "MarketReview",
+      "description": "Review and rating for a seller",
+      "type": "object",
+      "properties": {
+        "sellerId": { "type": "string" },
+        "buyerId": { "type": "string" },
+        "rating": { "type": "number" },
+        "comment": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["sellerId", "buyerId", "rating", "createdAt"]
+    },
+    "SavingsPool": {
+      "title": "SavingsPool",
+      "description": "Community savings group (Chitipa)",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "creatorId": { "type": "string" },
+        "members": { "type": "array" },
+        "targetAmount": { "type": "number" },
+        "contributionAmount": { "type": "number" },
+        "frequency": { "type": "string", "enum": ["weekly", "monthly"] },
+        "totalCollected": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "completed"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "creatorId", "contributionAmount", "frequency", "status"]
+    },
+    "Story": {
+      "title": "Story",
+      "description": "Disappearing 24h content",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userPhoto": { "type": "string" },
+        "mediaUrl": { "type": "string" },
+        "type": { "type": "string", "enum": ["image", "video"] },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "mediaUrl", "expiresAt", "createdAt"]
+    },
+    "Ad": {
+      "title": "Ad",
+      "description": "Advertisement campaign",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "targetUrl": { "type": "string" },
+        "adType": { "type": "string", "enum": ["sponsored_post", "banner", "marketplace_boost"] },
+        "status": { "type": "string", "enum": ["active", "paused", "completed"] },
+        "budget": { "type": "number" },
+        "spent": { "type": "number" },
+        "impressions": { "type": "number" },
+        "clicks": { "type": "number" },
+        "placement": { "type": "string", "enum": ["feed", "sidebar", "marketplace"] },
+        "ctaText": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "imageUrl", "adType", "status", "createdAt"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "User",
       "description": "User profiles"
+    },
+    "/ads/{adId}": {
+      "schema": "Ad",
+      "description": "Advertisement campaigns"
+    },
+    "/wallets/{walletId}": {
+      "schema": "Wallet",
+      "description": "User wallets (doc ID is userId)"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Financial transactions"
     },
     "/users/{userId}/notifications/{notificationId}": {
       "schema": "Notification",
@@ -184,9 +335,37 @@
       "schema": "VideoComment",
       "description": "Video comments"
     },
+    "/postLikes/{likeId}": {
+      "schema": "object",
+      "description": "Post likes"
+    },
+    "/postComments/{commentId}": {
+      "schema": "object",
+      "description": "Post comments"
+    },
     "/marketItems/{itemId}": {
       "schema": "MarketItem",
       "description": "Marketplace listings"
+    },
+    "/ai_chats/{chatId}": {
+      "schema": "AIChat",
+      "description": "AI Assistant chat history"
+    },
+    "/escrows/{escrowId}": {
+      "schema": "MarketEscrow",
+      "description": "Marketplace escrows"
+    },
+    "/reviews/{reviewId}": {
+      "schema": "MarketReview",
+      "description": "Seller reviews"
+    },
+    "/savings_pools/{poolId}": {
+      "schema": "SavingsPool",
+      "description": "Chitipa savings groups"
+    },
+    "/stories/{storyId}": {
+      "schema": "Story",
+      "description": "Temporary stories"
     }
   }
 }

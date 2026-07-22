@@ -16,6 +16,13 @@ export default function Notifications() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'mentions' | 'likes'>('all');
+  const [showSettings, setShowSettings] = useState(false);
+  const [prefs, setPrefs] = useState({
+    likes: true,
+    comments: true,
+    follows: true,
+    market: true
+  });
 
   useEffect(() => {
     if (!user) return;
@@ -30,7 +37,7 @@ export default function Notifications() {
       setNotifications(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })));
       setLoading(false);
     }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, `users/${user.uid}/notifications`);
+      handleFirestoreError(error, OperationType.LIST, `users/${user?.uid}/notifications`);
       setLoading(false);
     });
 
@@ -65,7 +72,7 @@ export default function Notifications() {
   });
 
   return (
-    <div className="p-4 space-y-4 relative h-full overflow-y-auto pb-24 scrollbar-hide bg-bg-main">
+    <div className="p-4 space-y-4 relative pb-24 bg-bg-main">
       <div className="flex items-center justify-between mt-2">
         <div>
           <h1 className="text-2xl font-black tracking-tight text-text-main">Notifications</h1>
@@ -79,11 +86,67 @@ export default function Notifications() {
              <CheckCircle2 size={14} />
              Mark All Read
            </button>
-           <Button variant="outline" size="icon" className="rounded-xl border-border hover:bg-slate-50">
+           <Button 
+             onClick={() => setShowSettings(true)}
+             variant="outline" 
+             size="icon" 
+             className="rounded-xl border-border hover:bg-slate-50"
+           >
              <Settings size={18} className="text-text-muted" />
            </Button>
         </div>
       </div>
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-end md:items-center justify-center p-4">
+          <div className="bg-surface w-full max-w-md rounded-t-3xl md:rounded-3xl overflow-hidden shadow-2xl animate-in slide-in-from-bottom duration-300">
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <h3 className="font-bold text-sm uppercase tracking-wider">Alert Settings</h3>
+              <button onClick={() => setShowSettings(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-6">
+              <div className="space-y-4">
+                {[
+                  { id: 'likes', label: 'Likes & Reactions', icon: <Heart size={16} className="text-red-500" /> },
+                  { id: 'comments', label: 'Comments & Replies', icon: <MessageCircle size={16} className="text-blue-500" /> },
+                  { id: 'follows', label: 'New Followers', icon: <UserPlus size={16} className="text-emerald-500" /> },
+                  { id: 'market', label: 'Marketplace Inquiries', icon: <Star size={16} className="text-amber-500" /> }
+                ].map((item) => (
+                  <div key={item.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-border">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-sm">
+                        {item.icon}
+                      </div>
+                      <span className="text-xs font-bold text-text-main">{item.label}</span>
+                    </div>
+                    <button 
+                      onClick={() => setPrefs(prev => ({ ...prev, [item.id]: !prev[item.id as keyof typeof prev] }))}
+                      className={`w-10 h-5 rounded-full relative transition-colors ${prefs[item.id as keyof typeof prefs] ? 'bg-primary' : 'bg-slate-200'}`}
+                    >
+                      <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow-sm transition-all ${prefs[item.id as keyof typeof prefs] ? 'right-0.5' : 'left-0.5'}`} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="pt-2">
+                <Button 
+                  onClick={() => {
+                    setShowSettings(false);
+                  }}
+                  className="w-full bg-slate-900 text-white rounded-2xl h-12 font-bold text-xs"
+                >
+                  Save Preferences
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Filter Tabs */}
       <div className="flex gap-2 py-2">

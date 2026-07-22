@@ -17,6 +17,22 @@
   body {
     @apply bg-bg-main text-text-main font-sans;
   }
+  ul {
+    @apply list-none pl-1 my-2.5 space-y-1.5;
+  }
+  ul li {
+    @apply relative pl-5 text-inherit leading-relaxed;
+  }
+  ul li::before {
+    content: "•";
+    @apply absolute left-0 top-[1px] text-emerald-500 font-extrabold text-sm select-none;
+  }
+  ol {
+    @apply list-decimal pl-6 my-2.5 space-y-1.5 text-inherit;
+  }
+  ol li {
+    @apply pl-1 leading-relaxed;
+  }
 }
 
 .scrollbar-hide::-webkit-scrollbar {

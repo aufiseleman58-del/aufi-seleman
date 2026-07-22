@@ -16,25 +16,21 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // Pillar 0: Verified Users mandate
-    function isVerifiedUser() {
-      return isSignedIn();
+    function isVerified() {
+      return isSignedIn() && (request.auth.token.email_verified == true || request.auth.token.firebase.sign_in_provider == 'google.com');
     }
 
     function isAdmin() {
-      // Identity check + Role lookup
-      return isVerifiedUser() && (
-        ('email' in request.auth.token && request.auth.token.email == "aufiseleman58@gmail.com") || 
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'user') == 'admin')
-      );
+      return isVerified() && 
+             (('email' in request.auth.token && request.auth.token.email == "aufiseleman58@gmail.com") || 
+              (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'user') == 'admin'));
     }
 
     function isOwner(uid) {
-      return isVerifiedUser() && request.auth.uid == uid;
+      return isVerified() && request.auth.uid == uid;
     }
 
-    // Pillar 3: Path Variable Hardening
     function isValidId(id) { 
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
     }
@@ -55,7 +51,7 @@ service cloud.firestore {
       return data.keys().hasAll(['uid', 'displayName']) &&
              data.uid == request.auth.uid &&
              data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() < 100 &&
-             (!('role' in data) || (data.role in ['user', 'admin']));
+             (!('role' in data) || data.role in ['user', 'admin']);
     }
 
     function isValidPost(data) {
@@ -84,14 +80,12 @@ service cloud.firestore {
       return data.keys().hasAll(['userId', 'role', 'text', 'createdAt']) &&
              data.userId == request.auth.uid &&
              data.role in ['user', 'model'] &&
-             data.text is string && data.text.size() > 0 &&
-             data.createdAt == request.time;
+             data.text is string && data.text.size() > 0;
     }
 
     function isValidSavingsPool(data) {
       return data.keys().hasAll(['name', 'creatorId', 'members', 'contributionAmount', 'frequency', 'status', 'createdAt']) &&
              data.creatorId == request.auth.uid &&
-             data.name is string && data.name.size() > 0 &&
              data.members is list && data.members.size() > 0 &&
              data.createdAt == request.time;
     }
@@ -106,16 +100,15 @@ service cloud.firestore {
 
     // User Profiles
     match /users/{userId} {
-      allow get: if true;
-      allow list: if true;
+      allow get: if isVerified();
+      allow list: if isVerified();
       allow create: if isOwner(userId) && isValidUser(incoming());
-      allow update: if (isOwner(userId) && !incoming().diff(existing()).affectedKeys().hasAny(['role', 'uid', 'email', 'isBanned', 'bannedAt', 'bannedBy'])) || 
-                     (isVerifiedUser() && incoming().diff(existing()).affectedKeys().hasOnly(['followersCount'])) ||
+      allow update: if (isOwner(userId) && !incoming().diff(existing()).affectedKeys().hasAny(['role', 'isVerified', 'uid', 'email'])) || 
                      isAdmin();
 
       match /notifications/{notificationId} {
         allow read: if isOwner(userId) || isAdmin();
-        allow create: if isVerifiedUser() && isValidId(notificationId); 
+        allow create: if isVerified() && isValidId(notificationId); 
         allow update: if isOwner(userId) && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
         allow delete: if isOwner(userId);
       }
@@ -136,23 +129,23 @@ service cloud.firestore {
       }
 
       match /followers/{followerId} {
-        allow read: if isVerifiedUser();
+        allow read: if true;
         allow write: if isOwner(followerId) && isValidId(userId);
       }
     }
 
-    // Wallets & Transactions
+    // Wallets & Transactions (Pillar 4 & 7)
     match /wallets/{walletId} {
       allow read: if isOwner(walletId) || isAdmin();
       allow create: if (isOwner(walletId) && isValidWallet(incoming())) || (
-        isVerifiedUser() && 
+        isVerified() && 
         incoming().userId == walletId && 
         incoming().balance >= 0 && 
         incoming().currency == 'MWK' &&
         incoming().updatedAt == request.time
       );
       allow update: if isOwner(walletId) || isAdmin() || (
-        isVerifiedUser() && 
+        isVerified() && 
         incoming().balance > existing().balance &&
         incoming().userId == existing().userId &&
         incoming().currency == existing().currency &&
@@ -161,18 +154,12 @@ service cloud.firestore {
     }
 
     match /transactions/{transactionId} {
-      allow read: if isVerifiedUser() && (
+      allow read: if isVerified() && (
         resource.data.fromId == request.auth.uid || 
         resource.data.toId == request.auth.uid || 
         isAdmin()
       );
-      // Query enforcer for list (Pillar 8)
-      allow list: if isVerifiedUser() && (
-        resource.data.fromId == request.auth.uid || 
-        resource.data.toId == request.auth.uid || 
-        isAdmin()
-      );
-      allow create: if isVerifiedUser() && 
+      allow create: if isVerified() && 
                      isValidId(transactionId) && 
                      isValidTransaction(incoming()) &&
                      (incoming().fromId == request.auth.uid || (incoming().type in ['topup', 'receive'] && incoming().toId == request.auth.uid));
@@ -182,48 +169,44 @@ service cloud.firestore {
     // Posts
     match /posts/{postId} {
       allow read: if true;
-      allow create: if isVerifiedUser() && isValidId(postId) && isValidPost(incoming());
-      allow update: if isVerifiedUser() && (
+      allow create: if isVerified() && isValidId(postId) && isValidPost(incoming());
+      allow update: if isVerified() && (
         resource.data.authorId == request.auth.uid || 
         isAdmin() || 
-        incoming().diff(existing()).affectedKeys().hasOnly(['sharesCount', 'likesCount', 'commentsCount', 'viewsCount', 'isFlagged', 'flaggedAt', 'flaggedBy', 'isPromoted', 'promotedUntil', 'moderatedAt', 'moderatedBy', 'poll'])
+        incoming().diff(existing()).affectedKeys().hasOnly(['sharesCount', 'likesCount', 'commentsCount', 'isPromoted', 'promotedUntil'])
       );
-      allow delete: if isVerifiedUser() && (resource.data.authorId == request.auth.uid || isAdmin());
+      allow delete: if isVerified() && (resource.data.authorId == request.auth.uid || isAdmin());
     }
 
+    // Post Interactions
     match /postLikes/{likeId} {
-      allow read: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isVerifiedUser() && isValidId(likeId) && incoming().userId == request.auth.uid;
-      allow delete: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read: if isVerified() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if isVerified() && resource.data.userId == request.auth.uid;
+      allow create: if isVerified() && isValidId(likeId) && incoming().userId == request.auth.uid;
+      allow delete: if isVerified() && (resource.data.userId == request.auth.uid || isAdmin());
     }
 
     match /postComments/{commentId} {
-      allow read, list: if true;
-      allow create: if isVerifiedUser() && isValidId(commentId) && incoming().userId == request.auth.uid;
-      allow update, delete: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read: if true;
+      allow create: if isVerified() && isValidId(commentId) && incoming().userId == request.auth.uid;
+      allow update, delete: if isVerified() && (resource.data.userId == request.auth.uid || isAdmin());
     }
 
     // Marketplace
     match /marketItems/{itemId} {
       allow read: if true;
-      allow create: if isVerifiedUser() && isValidId(itemId);
-      allow update, delete: if isVerifiedUser() && (
+      allow create: if isVerified() && isValidId(itemId);
+      allow update, delete: if isVerified() && (
         resource.data.sellerId == request.auth.uid || 
         isAdmin() ||
-        incoming().diff(existing()).affectedKeys().hasOnly(['isPromoted', 'promotedUntil', 'likesCount', 'status', 'viewsCount', 'isFlagged', 'flaggedAt', 'flaggedBy', 'moderatedAt', 'moderatedBy'])
+        incoming().diff(existing()).affectedKeys().hasOnly(['isPromoted', 'promotedUntil', 'likesCount'])
       );
-
-      match /comments/{commentId} {
-        allow read: if true;
-        allow create: if isVerifiedUser() && isValidId(commentId) && incoming().userId == request.auth.uid;
-        allow update, delete: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isAdmin());
-      }
     }
 
+    // Ads
     match /ads/{adId} {
       allow read: if true;
-      allow create: if (isVerifiedUser() && isValidId(adId) && incoming().ownerId == request.auth.uid) || isAdmin();
+      allow create: if isAdmin() && isValidId(adId);
       allow update: if isAdmin() || (
         (incoming().diff(existing()).affectedKeys().hasOnly(['impressions']) && incoming().impressions == existing().impressions + 1) ||
         (incoming().diff(existing()).affectedKeys().hasOnly(['clicks']) && incoming().clicks == existing().clicks + 1)
@@ -232,34 +215,30 @@ service cloud.firestore {
     }
 
     match /ai_chats/{chatId} {
-      allow read, list: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isVerifiedUser() && isValidId(chatId) && incoming().userId == request.auth.uid && isValidAIChat(incoming());
+      allow read: if isVerified() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isVerified() && isValidId(chatId) && incoming().userId == request.auth.uid;
       allow delete: if isAdmin();
     }
 
     match /userInteractions/{id} {
       allow read: if isAdmin();
-      allow create: if isVerifiedUser() && incoming().userId == request.auth.uid;
-    }
-
-    match /system_logs/{id} {
-      allow read, write: if isAdmin();
+      allow create: if isVerified() && incoming().userId == request.auth.uid;
     }
 
     match /escrows/{escrowId} {
-      allow read, list: if isVerifiedUser() && (resource.data.buyerId == request.auth.uid || resource.data.sellerId == request.auth.uid || isAdmin());
-      allow create: if isVerifiedUser() && isValidId(escrowId);
-      allow update: if isVerifiedUser() && (
+      allow read: if isVerified() && (resource.data.buyerId == request.auth.uid || resource.data.sellerId == request.auth.uid || isAdmin());
+      allow create: if isVerified() && isValidId(escrowId);
+      allow update: if isVerified() && (
         (resource.data.buyerId == request.auth.uid || resource.data.sellerId == request.auth.uid || isAdmin()) &&
         (incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
       );
     }
 
     match /savings_pools/{poolId} {
-      allow read, list: if isVerifiedUser();
-      allow create: if isVerifiedUser() && isValidId(poolId) && isValidSavingsPool(incoming());
-      allow update: if isVerifiedUser() && (
-        (request.auth.uid in resource.data.members || resource.data.creatorId == request.auth.uid || isAdmin()) ||
+      allow read: if isVerified();
+      allow create: if isVerified() && isValidId(poolId) && isValidSavingsPool(incoming());
+      allow update: if isVerified() && (
+        (request.auth.uid in resource.data.members || resource.data.creatorId == request.auth.uid) ||
         // Action: Join
         (incoming().members.hasAll(existing().members) && 
          request.auth.uid in incoming().members &&
@@ -269,62 +248,43 @@ service cloud.firestore {
 
     match /stories/{storyId} {
       allow read: if true;
-      allow create: if isVerifiedUser() && incoming().userId == request.auth.uid;
-      allow delete: if isAdmin() || (isVerifiedUser() && resource.data.userId == request.auth.uid);
+      allow create: if isVerified() && incoming().userId == request.auth.uid;
+      allow delete: if isAdmin() || (isVerified() && resource.data.userId == request.auth.uid);
     }
 
+    // Chats
     match /chats/{chatId} {
-      allow read, list: if isVerifiedUser() && request.auth.uid in resource.data.participants;
-      allow create: if isVerifiedUser() && request.auth.uid in incoming().participants;
-      allow update: if isVerifiedUser() && request.auth.uid in resource.data.participants;
+      allow read: if isVerified() && request.auth.uid in resource.data.participants;
+      allow create: if isVerified() && request.auth.uid in incoming().participants;
+      allow update: if isVerified() && request.auth.uid in resource.data.participants;
       
       match /messages/{messageId} {
-        // Relational check via get() is okay for single reads, but list queries must be handled carefully.
-        // For subcollection lists, get() on parent is executed.
-        allow read: if isVerifiedUser() && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
-        allow create: if isVerifiedUser() && 
+        allow read: if isVerified() && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+        allow create: if isVerified() && 
                       request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants && 
                       incoming().senderId == request.auth.uid;
       }
     }
 
+    // Videos
     match /videos/{videoId} {
       allow read: if true;
-      allow create: if isVerifiedUser() && (incoming().userId == request.auth.uid);
-      allow update: if isVerifiedUser() && (
+      allow create: if isVerified() && (incoming().userId == request.auth.uid);
+      allow update: if isVerified() && (
         resource.data.userId == request.auth.uid || 
         isAdmin() || 
-        incoming().diff(existing()).affectedKeys().hasOnly(['likesCount', 'commentsCount', 'sharesCount', 'viewsCount', 'isPromoted', 'promotedUntil', 'isFlagged', 'flaggedAt', 'flaggedBy', 'moderatedAt', 'moderatedBy', 'fireCount', 'laughCount', 'loveCount'])
+        incoming().diff(existing()).affectedKeys().hasOnly(['likesCount', 'commentsCount', 'isPromoted', 'promotedUntil'])
       );
-      allow delete: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow delete: if isVerified() && (resource.data.userId == request.auth.uid || isAdmin());
     }
 
-    match /videoLikes/{likeId} {
-      allow read: if isVerifiedUser();
-      allow list: if isVerifiedUser();
-      allow create: if isVerifiedUser() && isValidId(likeId) && incoming().userId == request.auth.uid;
-      allow delete: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isAdmin());
-    }
-
-    match /videoComments/{commentId} {
-      allow read: if true;
-      allow list: if true;
-      allow create: if isVerifiedUser() && isValidId(commentId) && incoming().userId == request.auth.uid;
-      allow update, delete: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isAdmin());
-    }
-
-    match /reviews/{reviewId} {
-      allow read: if true;
-      allow create: if isVerifiedUser() && isValidId(reviewId) && incoming().buyerId == request.auth.uid;
-      allow update, delete: if isVerifiedUser() && (resource.data.buyerId == request.auth.uid || isAdmin());
-    }
-
+    // Call System
     match /calls/{callId} {
-      allow read, create, update: if isVerifiedUser();
-      allow delete: if isVerifiedUser() && (resource.data.callerId == request.auth.uid || resource.data.calleeId == request.auth.uid || isAdmin());
+      allow read, create, update: if isVerified();
+      allow delete: if isVerified() && (resource.data.callerId == request.auth.uid || resource.data.calleeId == request.auth.uid || isAdmin());
       
-      match /callerCandidates/{candidateId} { allow read, write: if isVerifiedUser(); }
-      match /calleeCandidates/{candidateId} { allow read, write: if isVerifiedUser(); }
+      match /callerCandidates/{candidateId} { allow read, write: if isVerified(); }
+      match /calleeCandidates/{candidateId} { allow read, write: if isVerified(); }
     }
   }
 }

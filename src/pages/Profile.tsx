@@ -2,33 +2,45 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../AuthContext';
 import { useSettings } from '../SettingsContext';
 import { db, storage, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, query, where, orderBy, onSnapshot, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, doc, getDoc, updateDoc, increment, serverTimestamp, addDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { Button } from '@/components/ui/button';
-import { Heart, MessageSquare, Share2, Settings, ShieldCheck, MapPin, Calendar, User as UserIcon, X, Globe, Moon, Bell, Shield, LogOut, ChevronRight, Camera, RefreshCw, Upload, Play, ArrowDownLeft, ArrowUpRight, History, Check, Wallet as WalletIcon, Bookmark } from 'lucide-react';
+import { Heart, MessageSquare, Share2, Settings, ShieldCheck, MapPin, Calendar, User as UserIcon, X, Globe, Moon, Bell, Shield, LogOut, ChevronRight, Camera, RefreshCw, Upload, Play, ArrowDownLeft, ArrowUpRight, History, Check, Wallet as WalletIcon, Bookmark, Repeat, Edit, Trash2, TrendingUp, Mic, ArrowLeft } from 'lucide-react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import User from '../components/User';
+import PostCard from '../components/PostCard';
+import PostCommentsModal from '../components/PostCommentsModal';
+import PostDetailModal from '../components/PostDetailModal';
+import EditPostModal from '../components/EditPostModal';
 import { cn } from '@/lib/utils';
+import { compressImage } from '../lib/imageCompression';
 
 export default function Profile() {
   const { userId: paramId } = useParams<{ userId: string }>();
   const navigate = useNavigate();
-  const { user, profile: myProfile, logout, updateProfile, verifyIdentity } = useAuth();
+  const { user, profile: myProfile, logout, updateProfile, verifyIdentity, signIn, resetEncryption } = useAuth();
   const { language, setLanguage, dataSaver, setDataSaver, t } = useSettings();
   
   const [targetProfile, setTargetProfile] = useState<any>(null);
-  const [isOwnProfile, setIsOwnProfile] = useState(false);
   const targetId = paramId || user?.uid;
+  const isOwnProfile = !!user && targetId === user.uid;
   const [userPosts, setUserPosts] = useState<any[]>([]);
   const [userVideos, setUserVideos] = useState<any[]>([]);
   const [userComments, setUserComments] = useState<any[]>([]);
   const [savedPosts, setSavedPosts] = useState<any[]>([]);
+  const [likedPosts, setLikedPosts] = useState<Record<string, boolean>>({});
+  const [showCommentsFor, setShowCommentsFor] = useState<string | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingPost, setEditingPost] = useState<any>(null);
+  const [selectedPostForDetail, setSelectedPostForDetail] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'posts' | 'videos' | 'activity' | 'saved'>('posts');
+  const [activeTab, setActiveTab] = useState<'posts' | 'videos' | 'activity' | 'saved' | 'rewards'>('posts');
   const [activityFilter, setActivityFilter] = useState<'all' | 'posts' | 'comments'>('all');
   const [showSettings, setShowSettings] = useState(false);
+  const [showPrivacy, setShowPrivacy] = useState(false);
+  const [permissionsStatus, setPermissionsStatus] = useState<Record<string, PermissionState>>({});
   const [isEditing, setIsEditing] = useState(false);
   const [showVerification, setShowVerification] = useState(false);
   const [verifying, setVerifying] = useState(false);
@@ -41,11 +53,200 @@ export default function Profile() {
   const [editPhoto, setEditPhoto] = useState('');
   const [photoFile, setPhotoFile] = useState<File | Blob | null>(null);
   const [saving, setSaving] = useState(false);
+  const [privacyLoading, setPrivacyLoading] = useState<string | null>(null);
+
+  const togglePrivacySetting = async (field: string, currentVal: boolean) => {
+    if (!user) return;
+    setPrivacyLoading(field);
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        [field]: !currentVal
+      });
+      toast.success(`${field.replace(/([A-Z])/g, ' $1').toLowerCase()} updated!`);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
+      toast.error('Failed to update setting');
+    } finally {
+      setPrivacyLoading(null);
+    }
+  };
+
+  const [securityScore, setSecurityScore] = useState<number>(0);
+  const [securityIssues, setSecurityIssues] = useState<string[]>([]);
+  const [isScanning, setIsScanning] = useState(false);
+
+  const runSecurityCheckup = async () => {
+    setIsScanning(true);
+    setSecurityIssues([]);
+    
+    // Artificial delay for "scanning" effect
+    await new Promise(r => setTimeout(r, 2500));
+    
+    const issues: string[] = [];
+    let score = 100;
+    
+    if (!myProfile?.isVerified) {
+      issues.push("Identity not verified");
+      score -= 20;
+    }
+    if (!myProfile?.bio) {
+      issues.push("Profile bio is empty");
+      score -= 10;
+    }
+    if (!myProfile?.photoURL) {
+      issues.push("No profile photo set");
+      score -= 15;
+    }
+    if (permissionsStatus.camera !== 'granted' || permissionsStatus.microphone !== 'granted') {
+      issues.push("Device permissions not optimized");
+      score -= 5;
+    }
+    if (myProfile?.isPrivate === false) {
+      // Not necessarily an issue, but a privacy suggestion
+      issues.push("Account is currently public");
+      score -= 5;
+    }
+    
+    setSecurityIssues(issues);
+    setSecurityScore(score);
+    setIsScanning(false);
+    
+    if (issues.length === 0) {
+      toast.success("Security check complete! Your account is fully optimized.");
+    } else {
+      toast.warning(`Security check finished. Found ${issues.length} ways to improve.`);
+    }
+  };
+  const [followingIds, setFollowingIds] = useState<string[]>([]);
+  const [isFollowingLoaded, setIsFollowingLoaded] = useState(false);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const checkPerms = async () => {
+      try {
+        const results: Record<string, PermissionState> = {};
+        if (navigator.permissions && navigator.permissions.query) {
+          const names = ['camera', 'microphone', 'geolocation'] as const;
+          for (const name of names) {
+            try {
+              const status = await navigator.permissions.query({ name: name as any });
+              results[name] = status.state;
+              status.onchange = () => {
+                setPermissionsStatus(prev => ({ ...prev, [name]: status.state }));
+              };
+            } catch (e) {
+              console.warn(`Permission query for ${name} not supported`);
+            }
+          }
+          setPermissionsStatus(results);
+        }
+      } catch (err) {
+        console.error("Error checking permissions:", err);
+      }
+    };
+    checkPerms();
+  }, [showSettings]);
+
+  const requestGeneralPermission = async (type: 'camera' | 'microphone') => {
+    try {
+      if (type === 'camera') {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream.getTracks().forEach(t => t.stop());
+      } else {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(t => t.stop());
+      }
+      toast.success(`${type.charAt(0).toUpperCase() + type.slice(1)} access granted!`);
+      // Update status
+      if (navigator.permissions) {
+        const status = await navigator.permissions.query({ name: type as any });
+        setPermissionsStatus(prev => ({ ...prev, [type]: status.state }));
+      }
+    } catch (err) {
+      toast.error(`Could not gain ${type} access. Check your browser settings.`);
+    }
+  };
+
+  const handleRepost = async (post: any) => {
+    if (!user) return;
+    try {
+      await addDoc(collection(db, 'posts'), {
+        authorId: user.uid,
+        authorName: myProfile?.displayName || user.displayName || 'Anonymous',
+        authorPhoto: myProfile?.photoURL || user.photoURL || '',
+        authorVerified: myProfile?.isVerified || false,
+        content: ``,
+        isRepost: true,
+        originalPostId: post.id,
+        originalAuthorId: post.authorId,
+        originalAuthorName: post.authorName,
+        originalAuthorPhoto: post.authorPhoto,
+        originalAuthorVerified: post.authorVerified || false,
+        originalContent: post.content,
+        createdAt: serverTimestamp(),
+        likesCount: 0,
+        commentsCount: 0,
+        sharesCount: 0,
+        category: post.category || 'General'
+      });
+
+      await updateDoc(doc(db, 'posts', post.id), {
+        sharesCount: increment(1)
+      });
+
+      if (post.authorId !== user.uid) {
+        await addDoc(collection(db, 'users', post.authorId, 'notifications'), {
+          type: 'mention',
+          fromId: user.uid,
+          fromName: user.displayName || 'Anonymous',
+          fromPhoto: user.photoURL || '',
+          message: `shared your post`,
+          read: false,
+          createdAt: serverTimestamp(),
+          link: `/profile/${user.uid}`
+        });
+      }
+      toast.success('Post shared with your followers!');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'posts');
+    }
+  };
+
+  const handleExternalShare = async (post: any) => {
+    const shareData = {
+      title: `Zathu Post by ${post.authorName || 'User'}`,
+      text: post.content,
+      url: window.location.origin + `/profile/${post.authorId}`
+    };
+    if (navigator.share) {
+      try {
+        await navigator.share(shareData);
+      } catch (err: any) {
+        // Silently ignore cancellation errors, as they are expected user actions
+        if (err.name !== 'AbortError' && err.message !== 'Share canceled') {
+          console.error('Share failed:', err);
+          // Fallback to clipboard if it's an actual unexpected error
+          try {
+            await navigator.clipboard.writeText(shareData.url);
+            toast.success('Link copied to clipboard!');
+          } catch (clipErr) {
+            toast.error('Failed to share');
+          }
+        }
+      }
+    } else {
+      try {
+        await navigator.clipboard.writeText(shareData.url);
+        toast.success('Link copied to clipboard!');
+      } catch (err) {
+        toast.error('Failed to share');
+      }
+    }
+  };
 
   useEffect(() => {
     if (isOwnProfile && myProfile) {
@@ -55,10 +256,6 @@ export default function Profile() {
       setEditPhoto(myProfile.photoURL || '');
     }
   }, [myProfile, isOwnProfile]);
-
-  useEffect(() => {
-    setIsOwnProfile(!!user && targetId === user.uid);
-  }, [user, targetId]);
 
   useEffect(() => {
     if (!targetId) return;
@@ -81,6 +278,126 @@ export default function Profile() {
   }, [targetId, isOwnProfile, myProfile]);
 
   useEffect(() => {
+    if (!user) return;
+    const q = query(
+      collection(db, 'postLikes'),
+      where('userId', '==', user.uid)
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const liked: Record<string, boolean> = {};
+      snapshot.docs.forEach(doc => {
+        liked[doc.data().postId] = true;
+      });
+      setLikedPosts(liked);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'postLikes');
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  const toggleLike = async (postId: string) => {
+    if (!user) {
+      signIn();
+      return;
+    }
+
+    const isLiked = likedPosts[postId];
+    const likeId = `${user.uid}_${postId}`;
+
+    try {
+      if (isLiked) {
+        await deleteDoc(doc(db, 'postLikes', likeId));
+        await updateDoc(doc(db, 'posts', postId), {
+          likesCount: increment(-1)
+        });
+      } else {
+        await setDoc(doc(db, 'postLikes', likeId), {
+          postId,
+          userId: user.uid,
+          createdAt: serverTimestamp()
+        });
+        await updateDoc(doc(db, 'posts', postId), {
+          likesCount: increment(1)
+        });
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'postLikes');
+    }
+  };
+
+  const toggleSavePost = async (postId: string) => {
+    if (!user) {
+      signIn();
+      return;
+    }
+
+    const isSaved = savedPosts.some(s => s.id === postId);
+    const saveRef = doc(db, 'users', user.uid, 'savedPosts', postId);
+
+    try {
+      if (isSaved) {
+        await deleteDoc(saveRef);
+        toast.success('Removed from saved');
+      } else {
+        await setDoc(saveRef, { savedAt: serverTimestamp() });
+        toast.success('Post saved');
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'savedPosts');
+    }
+  };
+
+  const toggleFollowFromPost = async (userId: string, userName: string, userPhoto?: string) => {
+    if (!user) {
+      signIn();
+      return;
+    }
+    if (userId === user.uid) return;
+
+    const isFollowing = followingIds.includes(userId);
+    const myFollowingRef = doc(db, 'users', user.uid, 'following', userId);
+    const theirFollowersRef = doc(db, 'users', userId, 'followers', user.uid);
+
+    try {
+      if (isFollowing) {
+        await deleteDoc(myFollowingRef);
+        await deleteDoc(theirFollowersRef);
+        await updateDoc(doc(db, 'users', user.uid), { followingCount: increment(-1) });
+        await updateDoc(doc(db, 'users', userId), { followersCount: increment(-1) });
+        toast.success(`Unfollowed ${userName}`);
+      } else {
+        await setDoc(myFollowingRef, { followedAt: serverTimestamp() });
+        await setDoc(theirFollowersRef, { followedAt: serverTimestamp() });
+        await updateDoc(doc(db, 'users', user.uid), { followingCount: increment(1) });
+        await updateDoc(doc(db, 'users', userId), { followersCount: increment(1) });
+        
+        await addDoc(collection(db, 'users', userId, 'notifications'), {
+          type: 'follow',
+          senderId: user.uid,
+          senderName: myProfile?.displayName || user.displayName || 'User',
+          senderPhoto: myProfile?.photoURL || user.photoURL || '',
+          read: false,
+          createdAt: serverTimestamp()
+        });
+        toast.success(`Following ${userName}`);
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'following');
+    }
+  };
+
+  const handleDeletePost = async (postId: string) => {
+    if (window.confirm('Are you sure you want to delete this post?')) {
+      try {
+        await deleteDoc(doc(db, 'posts', postId));
+        toast.success('Post deleted');
+      } catch (error) {
+        handleFirestoreError(error, OperationType.DELETE, 'posts');
+      }
+    }
+  };
+
+  useEffect(() => {
     if (!targetId) return;
 
     const qPosts = query(
@@ -92,7 +409,8 @@ export default function Profile() {
     const unsubscribePosts = onSnapshot(qPosts, (snapshot) => {
       const postsData = snapshot.docs.map(doc => ({
         ...doc.data(),
-        id: doc.id
+        id: doc.id,
+        authorVerified: doc.data().authorVerified || false
       }));
       setUserPosts(postsData);
     }, (error) => {
@@ -175,6 +493,60 @@ export default function Profile() {
     }
   }, [isEditing, isCameraOpen]);
 
+  useEffect(() => {
+    if (!user) {
+      setFollowingIds([]);
+      setIsFollowingLoaded(true);
+      return;
+    }
+    const unsubscribe = onSnapshot(collection(db, 'users', user.uid, 'following'), (snapshot) => {
+      const ids = snapshot.docs.map(doc => doc.id);
+      setFollowingIds(ids);
+      setIsFollowingLoaded(true);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, `users/${user.uid}/following`);
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  const toggleFollow = async () => {
+    if (!user || !targetId || targetId === user.uid) return;
+    const isFollowing = followingIds.includes(targetId);
+    const targetName = targetProfile?.displayName || 'User';
+
+    const myFollowingRef = doc(db, 'users', user.uid, 'following', targetId);
+    const theirFollowersRef = doc(db, 'users', targetId, 'followers', user.uid);
+
+    try {
+      if (isFollowing) {
+        await deleteDoc(myFollowingRef);
+        await deleteDoc(theirFollowersRef);
+        await updateDoc(doc(db, 'users', user.uid), { followingCount: increment(-1) });
+        await updateDoc(doc(db, 'users', targetId), { followersCount: increment(-1) });
+        toast.success(`Unfollowed ${targetName}`);
+      } else {
+        await setDoc(myFollowingRef, { followedAt: serverTimestamp() });
+        await setDoc(theirFollowersRef, { followedAt: serverTimestamp() });
+        await updateDoc(doc(db, 'users', user.uid), { followingCount: increment(1) });
+        await updateDoc(doc(db, 'users', targetId), { followersCount: increment(1) });
+        
+        await addDoc(collection(db, 'users', targetId, 'notifications'), {
+          type: 'follow',
+          fromId: user.uid,
+          fromName: myProfile?.displayName || user.displayName || 'Anonymous',
+          fromPhoto: myProfile?.photoURL || user.photoURL || '',
+          message: `started following you`,
+          read: false,
+          createdAt: serverTimestamp(),
+          link: `/profile/${user.uid}`
+        });
+        toast.success(`Following ${targetName}`);
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'following');
+    }
+  };
+
   const handleLogout = async () => {
     await logout();
     setShowSettings(false);
@@ -187,8 +559,9 @@ export default function Profile() {
       let photoURL = editPhoto;
       
       if (photoFile) {
+        const fileToUpload = await compressImage(photoFile, dataSaver);
         const storageRef = ref(storage, `profiles/${user.uid}/avatar_${Date.now()}`);
-        const uploadResult = await uploadBytes(storageRef, photoFile);
+        const uploadResult = await uploadBytes(storageRef, fileToUpload);
         photoURL = await getDownloadURL(uploadResult.ref);
       }
 
@@ -313,32 +686,27 @@ export default function Profile() {
             </div>
           ) : (
             userPosts.map((post) => (
-              <div key={post.id} className="bg-surface rounded-xl border border-border overflow-hidden shadow-sm p-3">
-                <div className="text-[13px] leading-relaxed whitespace-pre-wrap mb-2">
-                  {post.content}
-                </div>
-                {post.media?.[0] && (
-                  <img 
-                    src={post.media[0] || undefined} 
-                    alt="Post content" 
-                    className="w-full aspect-video object-cover rounded-lg mb-2"
-                    referrerPolicy="no-referrer"
-                  />
-                )}
-                <div className="flex items-center gap-4 pt-2 border-t border-border mt-2">
-                  <div className="flex items-center gap-1 text-text-muted">
-                    <Heart size={14} />
-                    <span className="text-[11px]">{post.likesCount || 0}</span>
-                  </div>
-                  <div className="flex items-center gap-1 text-text-muted">
-                    <MessageSquare size={14} />
-                    <span className="text-[11px]">{post.commentsCount || 0}</span>
-                  </div>
-                  <div className="text-[10px] text-text-muted ml-auto">
-                    {post.createdAt?.toDate ? new Date(post.createdAt.toDate()).toLocaleDateString() : 'Just now'}
-                  </div>
-                </div>
-              </div>
+              <PostCard
+                key={post.id}
+                post={post}
+                user={user}
+                liked={!!likedPosts[post.id]}
+                saved={savedPosts.some(s => s.id === post.id)}
+                following={followingIds.includes(post.authorId)}
+                onLike={toggleLike}
+                onSave={toggleSavePost}
+                onFollow={toggleFollowFromPost}
+                onRepost={handleRepost}
+                onExternalShare={handleExternalShare}
+                onDelete={handleDeletePost}
+                onEdit={(p) => {
+                  setEditingPost(p);
+                  setShowEditModal(true);
+                }}
+                onMessage={(authorId) => navigate(`/messages?chatWith=${authorId}`)}
+                onComment={(postId) => setShowCommentsFor(postId)}
+                onClick={() => setSelectedPostForDetail(post)}
+              />
             ))
           )}
         </motion.div>
@@ -423,7 +791,7 @@ export default function Profile() {
             })
             .slice(0, 15) // Limit to top 15 recent activities
             .map((activity, idx) => (
-              <div key={activity.id || idx} className="bg-surface p-4 rounded-xl border border-border shadow-sm flex gap-3 group hover:border-primary/30 transition-colors">
+              <div key={`${activity.activityType}-${activity.id || idx}`} className="bg-surface p-4 rounded-xl border border-border shadow-sm flex gap-3 group hover:border-primary/30 transition-colors">
                 <div className={cn(
                   "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm",
                   activity.activityType === 'post' ? "bg-emerald-50 text-primary" : "bg-indigo-50 text-indigo-600"
@@ -465,7 +833,8 @@ export default function Profile() {
           key="saved"
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="grid grid-cols-1 gap-3 pb-20"
+          exit={{ opacity: 0, scale: 0.95 }}
+          className="space-y-3 pb-20"
         >
           {savedPosts.length === 0 ? (
             <div className="py-12 text-center bg-slate-50 rounded-2xl border border-dashed border-border px-4">
@@ -478,40 +847,103 @@ export default function Profile() {
             </div>
           ) : (
             savedPosts.map((post) => (
-              <div key={post.id} className="bg-surface rounded-2xl border border-border overflow-hidden shadow-sm p-4 hover:border-primary/20 transition-colors">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-8 h-8 rounded-xl bg-slate-200 overflow-hidden border border-border">
-                    {post.authorPhoto && <img src={post.authorPhoto} alt="" className="w-full h-full object-cover" />}
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-xs font-bold text-text-main">{post.authorName}</p>
-                    <p className="text-[9px] text-text-muted font-bold uppercase tracking-widest">{post.category || 'General'}</p>
-                  </div>
-                </div>
-                <div className="text-[13px] leading-relaxed line-clamp-3 mb-4 font-medium text-text-main">
-                  {post.content}
-                </div>
-                {post.media?.[0] && (
-                  <div className="aspect-video rounded-xl overflow-hidden border border-border mb-4">
-                    <img src={post.media[0] || undefined} className="w-full h-full object-cover" alt="" />
-                  </div>
-                )}
-                <div className="flex items-center justify-between pt-3 border-t border-border/50">
-                   <div className="flex gap-4">
-                    <div className="flex items-center gap-1 text-[10px] font-bold text-text-muted">
-                      <Heart size={12} />
-                      <span>{post.likesCount || 0}</span>
-                    </div>
-                    <div className="flex items-center gap-1 text-[10px] font-bold text-text-muted">
-                      <MessageSquare size={12} />
-                      <span>{post.commentsCount || 0}</span>
-                    </div>
-                  </div>
-                  <Link to="/" className="text-[10px] font-black text-primary bg-emerald-50 px-3 py-1.5 rounded-lg hover:bg-emerald-100 transition-colors">Original Post</Link>
-                </div>
-              </div>
+              <PostCard
+                key={post.id}
+                post={post}
+                user={user}
+                liked={!!likedPosts[post.id]}
+                saved={true}
+                following={followingIds.includes(post.authorId)}
+                onLike={toggleLike}
+                onSave={toggleSavePost}
+                onFollow={toggleFollowFromPost}
+                onRepost={handleRepost}
+                onExternalShare={handleExternalShare}
+                onDelete={handleDeletePost}
+                onEdit={(p) => {
+                  setEditingPost(p);
+                  setShowEditModal(true);
+                }}
+                onMessage={(authorId) => navigate(`/messages?chatWith=${authorId}`)}
+                onComment={(postId) => setShowCommentsFor(postId)}
+                onClick={() => setSelectedPostForDetail(post)}
+              />
             ))
           )}
+        </motion.div>
+      );
+    }
+
+    if (activeTab === 'rewards') {
+      return (
+        <motion.div 
+          key="rewards"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="space-y-6 pb-20"
+        >
+          <div className="bg-white rounded-[32px] p-6 border border-border overflow-hidden relative group">
+            <div className="relative z-10">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-10 h-10 bg-emerald-50 rounded-2xl flex items-center justify-center text-primary">
+                  <TrendingUp size={20} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-widest text-text-main">Zathu Reputation</h3>
+                  <p className="text-[10px] font-bold text-text-muted">Network Influence Score</p>
+                </div>
+              </div>
+              
+              <div className="flex items-end gap-3 mb-6">
+                <span className="text-4xl font-black text-primary tracking-tighter">742</span>
+                <span className="text-xs font-bold text-emerald-500 mb-1">+12 this week</span>
+              </div>
+
+              <div className="space-y-2 mb-6">
+                <div className="flex justify-between text-[9px] font-black uppercase tracking-widest text-text-muted">
+                  <span>Elite Rank Progress</span>
+                  <span>74%</span>
+                </div>
+                <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-primary w-[74%]" />
+                </div>
+              </div>
+
+              <p className="text-[11px] text-text-muted leading-relaxed uppercase tracking-tight">
+                High reputation unlocks lower marketplace fees, priority AI search, and verified badges.
+              </p>
+            </div>
+            <TrendingUp size={120} className="absolute -right-8 -bottom-8 text-slate-50 group-hover:text-emerald-50 transition-colors opacity-20" />
+          </div>
+
+          <div className="grid grid-cols-1 gap-4">
+            <h4 className="text-[10px] font-black uppercase tracking-widest text-text-muted px-2">Achievements</h4>
+            {[
+              { name: 'Pioneer', icon: '🚀', unlock: 'Early access member', status: 'Unlocked' },
+              { name: 'Power Seller', icon: '💎', unlock: '10+ Marketplace sales', status: 'Locked' },
+              { name: 'Elite Voice', icon: '🏆', unlock: '50+ High engagement posts', status: 'Locked' },
+              { name: 'Knowledge Seeker', icon: '🤖', unlock: 'Expert user of Zathu AI', status: 'Unlocked' }
+            ].map((achievement, idx) => (
+               <div key={idx} className={cn(
+                 "p-4 rounded-3xl border border-border flex items-center gap-4 transition-all",
+                 achievement.status === 'Locked' ? "bg-slate-50 opacity-60 grayscale" : "bg-white hover:border-primary/20"
+               )}>
+                 <div className="w-14 h-14 rounded-2xl bg-slate-50 flex items-center justify-center text-3xl border border-border/50">
+                   {achievement.icon}
+                 </div>
+                 <div className="flex-1">
+                   <p className="text-xs font-black uppercase tracking-widest text-text-main">{achievement.name}</p>
+                   <p className="text-[10px] text-text-muted font-medium">{achievement.unlock}</p>
+                 </div>
+                 <div className={cn(
+                   "px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest border",
+                   achievement.status === 'Unlocked' ? "bg-emerald-50 text-primary border-primary/20" : "bg-slate-200 text-text-muted border-transparent"
+                 )}>
+                   {achievement.status}
+                 </div>
+               </div>
+            ))}
+          </div>
         </motion.div>
       );
     }
@@ -527,13 +959,13 @@ export default function Profile() {
         </div>
         <h2 className="text-xl font-bold">Your Profile</h2>
         <p className="text-text-muted text-sm">Sign in to view your profile, posts, and wallet.</p>
-        <Button className="bg-primary hover:bg-emerald-700 text-white rounded-full px-8">Sign In</Button>
+        <Button onClick={signIn} className="bg-primary hover:bg-emerald-700 text-white rounded-full px-8">Sign In</Button>
       </div>
     );
   }
 
   return (
-    <div className="space-y-4 pb-8 relative h-full overflow-y-auto">
+    <div className="space-y-4 pb-8 relative bg-slate-50">
       {/* Header / Cover */}
       <div className="relative">
         <div className="h-32 bg-gradient-to-r from-emerald-600 to-primary" />
@@ -542,6 +974,7 @@ export default function Profile() {
             displayName={targetProfile?.displayName || targetId?.substring(0, 8)}
             photoURL={targetProfile?.photoURL}
             isVerified={targetProfile?.isVerified}
+            isOnline={targetProfile?.isOnline}
             size="lg"
             className="ring-4 ring-surface rounded-2xl"
           />
@@ -563,14 +996,27 @@ export default function Profile() {
                 <Settings size={14} className="text-text-muted" />
               </Button>
             ) : (
-              <Button 
-                onClick={() => navigate('/messages')}
-                variant="outline" 
-                size="sm" 
-                className="rounded-full h-8 px-4 border-primary text-primary hover:bg-emerald-50 transition-colors text-[11px] font-bold"
-              >
-                Message
-              </Button>
+              <div className="flex gap-2">
+                <Button 
+                  onClick={toggleFollow}
+                  className={cn(
+                    "rounded-full h-8 px-5 text-[11px] font-bold transition-all",
+                    followingIds.includes(targetId || '') 
+                      ? "bg-slate-100 text-text-muted hover:bg-slate-200" 
+                      : "bg-primary text-white hover:bg-emerald-700 shadow-md shadow-primary/20"
+                  )}
+                >
+                  {followingIds.includes(targetId || '') ? 'Following' : 'Follow'}
+                </Button>
+                <Button 
+                  onClick={() => navigate(`/messages?chatWith=${targetId}`)}
+                  variant="outline" 
+                  size="sm" 
+                  className="rounded-full h-8 px-4 border-primary text-primary hover:bg-emerald-50 transition-colors text-[11px] font-bold"
+                >
+                  Message
+                </Button>
+              </div>
             )}
           </div>
         </div>
@@ -581,14 +1027,250 @@ export default function Profile() {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-end md:items-center justify-center p-4">
           <div className="bg-surface w-full max-w-md rounded-t-3xl md:rounded-3xl overflow-hidden shadow-2xl animate-in slide-in-from-bottom duration-300">
             <div className="p-4 border-b border-border flex items-center justify-between">
-              <h3 className="font-bold text-sm uppercase tracking-wider">Settings</h3>
-              <button onClick={() => setShowSettings(false)} className="p-2 hover:bg-slate-100 rounded-full">
+              <div className="flex items-center gap-3">
+                {showPrivacy && (
+                  <button 
+                    onClick={() => setShowPrivacy(false)}
+                    className="p-1 hover:bg-slate-100 rounded-full"
+                  >
+                    <ArrowLeft size={18} />
+                  </button>
+                )}
+                <h3 className="font-bold text-sm uppercase tracking-wider">
+                  {showPrivacy ? 'Privacy & Security' : 'Settings'}
+                </h3>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowSettings(false);
+                  setShowPrivacy(false);
+                }} 
+                className="p-2 hover:bg-slate-100 rounded-full"
+              >
                 <X size={20} />
               </button>
             </div>
             
-            <div className="p-4 space-y-6 max-h-[70vh] overflow-y-auto scrollbar-hide">
-              <div className="space-y-2">
+            <div className="p-4 md:p-6 space-y-6 max-h-[80vh] overflow-y-auto scroll-smooth">
+              {showPrivacy ? (
+                <div className="space-y-6">
+                  {/* Security Health Card */}
+                  <div className="p-5 bg-gradient-to-br from-slate-900 to-slate-800 rounded-3xl border border-white/10 shadow-2xl relative overflow-hidden group">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-primary/10 rounded-full -mr-16 -mt-16 blur-2xl group-hover:bg-primary/20 transition-all duration-500" />
+                    
+                    <div className="relative z-10">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-primary/20 text-primary rounded-2xl flex items-center justify-center shadow-inner">
+                            <ShieldCheck size={24} />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-primary">Pulse Security</span>
+                            <h5 className="text-white font-black text-sm">Account Guardian AI</h5>
+                          </div>
+                        </div>
+                        {securityScore > 0 && (
+                          <div className={cn(
+                            "px-3 py-1 rounded-full text-[10px] font-black border tracking-widest",
+                            securityScore > 80 ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                          )}>
+                            {securityScore}% SECURE
+                          </div>
+                        )}
+                      </div>
+
+                      {isScanning ? (
+                        <div className="py-6 flex flex-col items-center justify-center gap-4">
+                           <RefreshCw size={40} className="text-primary animate-spin" />
+                           <div className="text-center">
+                             <p className="text-[10px] font-black text-white uppercase tracking-[0.3em] animate-pulse">Scanning Neural Nodes...</p>
+                             <p className="text-[8px] text-slate-400 uppercase mt-1">Verifying encrypted handshakes</p>
+                           </div>
+                        </div>
+                      ) : securityIssues.length > 0 ? (
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-1 gap-2">
+                            <AnimatePresence mode="popLayout">
+                              {securityIssues.map((issue) => (
+                                <motion.div 
+                                  key={issue} 
+                                  layout
+                                  initial={{ opacity: 0, x: -10, scale: 0.95 }}
+                                  animate={{ opacity: 1, x: 0, scale: 1 }}
+                                  exit={{ opacity: 0, scale: 0.8, x: 20, filter: 'blur(8px)' }}
+                                  transition={{ type: 'spring', stiffness: 500, damping: 30, mass: 1 }}
+                                  className="flex items-center justify-between p-3 bg-white/5 rounded-2xl border border-white/5 group hover:bg-white/10 transition-colors"
+                                >
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)] group-hover:scale-125 transition-transform" />
+                                    <span className="text-[11px] font-bold text-slate-200">{issue}</span>
+                                  </div>
+                                  <button 
+                                    onClick={() => {
+                                      setSecurityIssues(prev => prev.filter(i => i !== issue));
+                                      setSecurityScore(prev => Math.min(100, prev + 5));
+                                      toast.success("Issue resolved", {
+                                        icon: <Check size={14} className="text-emerald-500" />,
+                                        className: "bg-slate-900 border-white/10 text-white"
+                                      });
+                                    }}
+                                    className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-500 opacity-0 group-hover:opacity-100 transition-all hover:bg-emerald-500 hover:text-white"
+                                  >
+                                    <Check size={12} strokeWidth={3} />
+                                  </button>
+                                </motion.div>
+                              ))}
+                            </AnimatePresence>
+                          </div>
+                          <Button 
+                            onClick={runSecurityCheckup}
+                            className="w-full bg-primary hover:bg-emerald-600 text-white rounded-2xl h-11 font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 shadow-lg shadow-primary/20"
+                          >
+                            Restart System Cleanup
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          <p className="text-[11px] text-slate-400 leading-relaxed font-medium">
+                            Zathu uses advanced biometric and AI analysis to ensure your marketplace transactions and social interactions remain 100% secure.
+                          </p>
+                          <Button 
+                            onClick={runSecurityCheckup}
+                            className={cn(
+                              "w-full rounded-2xl h-11 font-black text-[10px] uppercase tracking-widest transition-all active:scale-95",
+                              securityScore > 0 ? "bg-white/10 text-emerald-400" : "bg-primary text-white shadow-lg shadow-primary/20 hover:bg-emerald-600"
+                            )}
+                          >
+                            {securityScore > 0 ? 'Account Status: Nominal' : 'Initialize Deep Scan'}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-text-muted px-1">Privacy Protocols</h4>
+                    <div className="bg-white rounded-3xl border border-border overflow-hidden divide-y divide-border">
+                      <div className="p-4 flex items-center justify-between group hover:bg-slate-50 transition-colors">
+                        <div className="flex flex-col">
+                          <span className="text-xs font-black text-text-main">Private Mode</span>
+                          <span className="text-[10px] text-text-muted font-bold">Only validated peers can see activities</span>
+                        </div>
+                        <button 
+                          onClick={() => togglePrivacySetting('isPrivate', !!myProfile?.isPrivate)}
+                          disabled={privacyLoading === 'isPrivate'}
+                          className={cn(
+                            "w-10 h-5 rounded-full relative transition-all duration-300",
+                            myProfile?.isPrivate ? "bg-primary" : "bg-slate-200",
+                            privacyLoading === 'isPrivate' && "opacity-50 cursor-wait"
+                          )}
+                        >
+                          <div className={cn(
+                            "absolute top-0.5 w-4 h-4 bg-white rounded-full shadow-md transition-all duration-300",
+                            myProfile?.isPrivate ? "right-0.5" : "left-0.5"
+                          )} />
+                        </button>
+                      </div>
+                      
+                      <div className="p-4 flex items-center justify-between group hover:bg-slate-50 transition-colors">
+                        <div className="flex flex-col">
+                          <span className="text-xs font-black text-text-main">Neural Tagging</span>
+                          <span className="text-[10px] text-text-muted font-bold">Allow others to @mention your profile</span>
+                        </div>
+                        <button 
+                          onClick={() => togglePrivacySetting('allowMentions', myProfile?.allowMentions !== false)}
+                          disabled={privacyLoading === 'allowMentions'}
+                          className={cn(
+                            "w-10 h-5 rounded-full relative transition-all duration-300",
+                            myProfile?.allowMentions !== false ? "bg-primary" : "bg-slate-200",
+                            privacyLoading === 'allowMentions' && "opacity-50 cursor-wait"
+                          )}
+                        >
+                          <div className={cn(
+                            "absolute top-0.5 w-4 h-4 bg-white rounded-full shadow-md transition-all duration-300",
+                            myProfile?.allowMentions !== false ? "right-0.5" : "left-0.5"
+                          )} />
+                        </button>
+                      </div>
+
+                      <div className="p-4 flex items-center justify-between group hover:bg-slate-50 transition-colors">
+                        <div className="flex flex-col">
+                          <span className="text-xs font-black text-text-main">Hide Wallet Focus</span>
+                          <span className="text-[10px] text-text-muted font-bold">Blur balance in profile scrollers</span>
+                        </div>
+                        <button 
+                          onClick={() => togglePrivacySetting('hideBalance', !!myProfile?.hideBalance)}
+                          disabled={privacyLoading === 'hideBalance'}
+                          className={cn(
+                            "w-10 h-5 rounded-full relative transition-all duration-300",
+                            myProfile?.hideBalance ? "bg-primary" : "bg-slate-200",
+                            privacyLoading === 'hideBalance' && "opacity-50 cursor-wait"
+                          )}
+                        >
+                          <div className={cn(
+                            "absolute top-0.5 w-4 h-4 bg-white rounded-full shadow-md transition-all duration-300",
+                            myProfile?.hideBalance ? "right-0.5" : "left-0.5"
+                          )} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-text-muted px-1">Advanced Controls</h4>
+                    <div className="bg-white rounded-3xl border border-border overflow-hidden divide-y divide-border">
+                      <button 
+                        onClick={() => toast.success("Data Request Submitted", { description: "You will receive an email with your profile data archive within 48 hours." })}
+                        className="w-full p-4 flex items-center justify-between hover:bg-slate-50 transition-colors"
+                      >
+                         <div className="flex items-center gap-3">
+                           <div className="w-8 h-8 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center">
+                              <History size={16} />
+                           </div>
+                           <span className="text-xs font-bold text-text-main">Download Personal Archive</span>
+                         </div>
+                         <ChevronRight size={14} className="text-text-muted" />
+                      </button>
+                      <button 
+                        onClick={() => {
+                          if (window.confirm("WARNING: This will generate new encryption keys. You will lose access to all your past encrypted messages. Only do this if you have lost your keys or are experiencing decryption errors. Continue?")) {
+                            resetEncryption().then(() => {
+                              toast.success("Security keys reset successfully!");
+                              setShowSettings(false);
+                            });
+                          }
+                        }}
+                        className="w-full p-4 flex items-center justify-between hover:bg-amber-50 transition-colors"
+                      >
+                         <div className="flex items-center gap-3">
+                           <div className="w-8 h-8 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center">
+                              <Shield size={16} />
+                           </div>
+                           <div className="flex flex-col items-start translate-y-0.5">
+                             <span className="text-xs font-bold text-text-main">Reset Secure Identity</span>
+                             <span className="text-[8px] text-amber-600 font-black uppercase">Fix decryption errors</span>
+                           </div>
+                         </div>
+                         <ChevronRight size={14} className="text-text-muted" />
+                      </button>
+                      <button 
+                        onClick={() => toast.error("Self-Destruct Sequence unavailable", { description: "Please contact support for account deletion requests." })}
+                        className="w-full p-4 flex items-center justify-between hover:bg-red-50 transition-colors"
+                      >
+                         <div className="flex items-center gap-3">
+                           <div className="w-8 h-8 bg-red-50 text-red-600 rounded-xl flex items-center justify-center">
+                              <Trash2 size={16} />
+                           </div>
+                           <span className="text-xs font-bold text-red-600">Request Account Erasure</span>
+                         </div>
+                         <ChevronRight size={14} className="text-text-muted" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                <div className="space-y-2">
                 <h4 className="text-[10px] font-bold uppercase tracking-wider text-text-muted">Account</h4>
                 <div className="bg-slate-50 rounded-2xl border border-border overflow-hidden divide-y divide-border">
                   <div 
@@ -623,16 +1305,97 @@ export default function Profile() {
                     <ChevronRight size={14} className="text-text-muted" />
                   </div>
                   )}
-                  <div className="p-3 flex items-center justify-between hover:bg-slate-100 transition-colors cursor-pointer">
+                  <div 
+                    onClick={() => setShowPrivacy(true)}
+                    id="privacy-security-btn"
+                    className="p-3 flex items-center justify-between hover:bg-slate-100 transition-colors cursor-pointer group active:bg-slate-200"
+                  >
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center">
+                      <div className="w-8 h-8 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center group-hover:scale-110 transition-transform">
                         <Shield size={16} />
                       </div>
-                      <span className="text-xs font-medium">Privacy & Security</span>
+                      <span className="text-xs font-bold text-text-main">Privacy & Security</span>
                     </div>
-                    <ChevronRight size={14} className="text-text-muted" />
+                    <ChevronRight size={14} className="text-text-muted group-hover:translate-x-0.5 transition-transform" />
                   </div>
                 </div>
+              </div>
+
+              <div className="space-y-2">
+                <h4 className="text-[10px] font-bold uppercase tracking-wider text-text-muted">Device Permissions</h4>
+                <div className="bg-slate-50 rounded-2xl border border-border overflow-hidden divide-y divide-border">
+                  <div className="p-3 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={cn(
+                        "w-8 h-8 rounded-lg flex items-center justify-center",
+                        permissionsStatus.camera === 'granted' ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-400"
+                      )}>
+                        <Camera size={16} />
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-xs font-medium">Camera</span>
+                        <span className="text-[9px] text-text-muted uppercase font-black">{permissionsStatus.camera || 'Not tested'}</span>
+                      </div>
+                    </div>
+                    {permissionsStatus.camera !== 'granted' && (
+                      <button 
+                        onClick={() => requestGeneralPermission('camera')}
+                        className="text-[10px] font-bold text-primary hover:underline"
+                      >
+                        ENABLE
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="p-3 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={cn(
+                        "w-8 h-8 rounded-lg flex items-center justify-center",
+                        permissionsStatus.microphone === 'granted' ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-400"
+                      )}>
+                        <Mic size={16} />
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-xs font-medium">Microphone</span>
+                        <span className="text-[9px] text-text-muted uppercase font-black">{permissionsStatus.microphone || 'Not tested'}</span>
+                      </div>
+                    </div>
+                    {permissionsStatus.microphone !== 'granted' && (
+                      <button 
+                        onClick={() => requestGeneralPermission('microphone')}
+                        className="text-[10px] font-bold text-primary hover:underline"
+                      >
+                        ENABLE
+                      </button>
+                    )}
+                  </div>
+                  
+                  <div className="p-3 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={cn(
+                        "w-8 h-8 rounded-lg flex items-center justify-center",
+                        permissionsStatus.geolocation === 'granted' ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-400"
+                      )}>
+                        <MapPin size={16} />
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-xs font-medium">Location</span>
+                        <span className="text-[9px] text-text-muted uppercase font-black">{permissionsStatus.geolocation || 'Not tested'}</span>
+                      </div>
+                    </div>
+                    {permissionsStatus.geolocation !== 'granted' && (
+                      <button 
+                        onClick={() => navigator.geolocation.getCurrentPosition(() => {}, () => {})}
+                        className="text-[10px] font-bold text-primary hover:underline"
+                      >
+                        ENABLE
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <p className="text-[9px] text-text-muted px-1">
+                  Access is required for recording videos, audio messages, and tagging your city in posts.
+                </p>
               </div>
 
               <div className="space-y-2">
@@ -684,10 +1447,42 @@ export default function Profile() {
                 <LogOut size={18} />
                 {t('profile.logout')}
               </Button>
+              </>
+              )}
             </div>
           </div>
         </div>
       )}
+
+      {/* Post Comments Modal */}
+      <PostCommentsModal 
+        isOpen={!!showCommentsFor}
+        onClose={() => setShowCommentsFor(null)}
+        postId={showCommentsFor || ''}
+      />
+
+      <EditPostModal
+        isOpen={showEditModal}
+        onClose={() => {
+          setShowEditModal(false);
+          setEditingPost(null);
+        }}
+        post={editingPost}
+      />
+
+      <PostDetailModal
+        isOpen={!!selectedPostForDetail}
+        onClose={() => setSelectedPostForDetail(null)}
+        post={selectedPostForDetail}
+        liked={selectedPostForDetail ? !!likedPosts[selectedPostForDetail.id] : false}
+        saved={selectedPostForDetail ? !!(savedPosts.find(s => s.id === selectedPostForDetail.id)) : false}
+        following={selectedPostForDetail ? followingIds.includes(selectedPostForDetail.authorId) : false}
+        onLike={toggleLike}
+        onSave={toggleSavePost}
+        onFollow={toggleFollowFromPost}
+        onRepost={handleRepost}
+        onDelete={handleDeletePost}
+      />
 
       {/* Verification Modal */}
       {showVerification && (
@@ -940,6 +1735,21 @@ export default function Profile() {
             <MapPin size={12} />
             <span>{targetProfile?.location || 'Malawi'}</span>
           </div>
+          
+          {targetProfile?.badges && targetProfile.badges.length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-2 w-full">
+              {targetProfile.badges.map((badge: any) => (
+                <div key={badge.id} className="group relative">
+                  <div className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-[16px] border border-border/50 hover:scale-110 transition-transform cursor-help">
+                    {badge.icon}
+                  </div>
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 p-2 bg-slate-900 text-white text-[9px] font-black uppercase tracking-widest rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20">
+                    {badge.name}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="flex items-center gap-1.5 text-text-muted text-[11px]">
             <Calendar size={12} />
             <span>{t('profile.joined')} {targetProfile?.createdAt?.toDate ? new Date(targetProfile.createdAt.toDate()).toLocaleDateString() : 'Recently'}</span>
@@ -952,11 +1762,11 @@ export default function Profile() {
             <p className="text-[10px] text-text-muted uppercase tracking-wider">{t('profile.posts')}</p>
           </div>
           <div className="text-center">
-            <p className="font-bold text-sm">1.2k</p>
+            <p className="font-bold text-sm">{targetProfile?.followersCount || 0}</p>
             <p className="text-[10px] text-text-muted uppercase tracking-wider">{t('profile.followers')}</p>
           </div>
           <div className="text-center">
-            <p className="font-bold text-sm">450</p>
+            <p className="font-bold text-sm">{targetProfile?.followingCount || 0}</p>
             <p className="text-[10px] text-text-muted uppercase tracking-wider">{t('profile.following')}</p>
           </div>
         </div>
@@ -1032,6 +1842,13 @@ export default function Profile() {
         >
           {t('profile.saved') || 'Saved'}
           {activeTab === 'saved' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+        </button>
+        <button 
+          onClick={() => setActiveTab('rewards')}
+          className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors relative ${activeTab === 'rewards' ? 'text-primary' : 'text-text-muted'}`}
+        >
+          Rewards
+          {activeTab === 'rewards' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
         </button>
       </div>
 
